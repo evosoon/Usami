@@ -1,0 +1,43 @@
+# ================================================
+# 工具注册配置
+# 内置工具 + MCP Server 声明
+# ================================================
+
+builtin_tools:
+  web_search:
+    description: "搜索互联网获取最新信息"
+    permission_level: 1  # L1: 只读
+    requires_approval: false
+
+  knowledge_search:
+    description: "从知识库中检索相关信息"
+    permission_level: 1
+    requires_approval: false
+
+  file_write:
+    description: "写入文件（Markdown/JSON 等）"
+    permission_level: 2  # L2: 有副作用
+    requires_approval: false
+
+# --- MCP Server 接入 (MVP 可选) ---
+mcp_servers: {}
+  # 取消注释以接入 MCP Server:
+  # github:
+  #   transport: "http"
+  #   url: "http://localhost:3001/mcp"
+  #   permission_level: 2
+  #   requires_approval: false
+  # 
+  # filesystem:
+  #   transport: "stdio"
+  #   command: "npx"
+  #   args: ["-y", "@modelcontextprotocol/server-filesystem", "/data"]
+  #   permission_level: 4
+  #   requires_approval: true  # L4 强制审批
+
+# --- Sandbox (MVP 关闭) ---
+sandbox:
+  enabled: false
+  # image: "agenticOS-sandbox:latest"
+  # memory_limit: "512m"
+  # timeout: 30

@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  # === Backend API ===
+  backend:
+    build: ./backend
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - ./config:/app/config
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # === Frontend ===
+  # frontend:
+  #   build: ./frontend
+  #   ports:
+  #     - "${FRONTEND_PORT:-3000}:3000"
+  #   depends_on:
+  #     - backend
+  #   volumes:
+  #     - ./frontend/src:/app/src
+
+  # === PostgreSQL (持久状态 + Checkpoint + 向量) ===
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agenticOS}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agenticOS}
+      POSTGRES_DB: ${POSTGRES_DB:-agenticOS}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agenticOS"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # === Redis (工作记忆 + 事件总线) ===
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # === LiteLLM Proxy (Model Router) ===
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    ports:
+      - "${LITELLM_PORT:-4000}:4000"
+    volumes:
+      - ./config/litellm_config.yaml:/app/config.yaml
+    command: --config /app/config.yaml --port 4000
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:4000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  pgdata:
+  redisdata:

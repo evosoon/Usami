@@ -1,0 +1,33 @@
+# ================================================
+# LiteLLM Model Router Configuration
+# 按任务复杂度路由到不同模型，优化成本
+# ================================================
+
+model_list:
+  # --- 强模型: 复杂推理、规划、写作 ---
+  - model_name: "strong"
+    litellm_params:
+      model: "anthropic/claude-sonnet-4-20250514"
+      api_key: "os.environ/ANTHROPIC_API_KEY"
+
+  # --- 中等模型: 信息整理、分析 ---
+  - model_name: "medium"
+    litellm_params:
+      model: "openai/gpt-4o-mini"
+      api_key: "os.environ/OPENAI_API_KEY"
+
+  # --- 轻量模型: 分类、路由、摘要 ---
+  - model_name: "light"
+    litellm_params:
+      model: "openai/gpt-4o-mini"
+      api_key: "os.environ/OPENAI_API_KEY"
+
+# --- 路由策略 ---
+router_settings:
+  routing_strategy: "simple-shuffle"  # MVP: 同名模型间负载均衡
+  num_retries: 2
+  timeout: 60
+
+# --- 成本追踪 ---
+general_settings:
+  master_key: "sk-agenticOS-dev"  # LiteLLM 管理密钥

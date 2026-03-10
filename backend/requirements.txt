@@ -1,0 +1,43 @@
+# === Core ===
+fastapi==0.115.*
+uvicorn[standard]==0.34.*
+websockets==14.*
+pydantic==2.*
+pyyaml==6.*
+python-dotenv==1.*
+
+# === Agent Runtime ===
+langgraph==0.4.*
+langchain==0.3.*
+langchain-openai==0.3.*
+langchain-anthropic==0.3.*
+langchain-community==0.3.*
+
+# === MCP (动态工具发现) ===
+langchain-mcp-adapters==0.1.*
+
+# === LLM Gateway ===
+litellm==1.*
+
+# === Database ===
+asyncpg==0.30.*
+sqlalchemy[asyncio]==2.*
+psycopg[binary]==3.*
+langgraph-checkpoint-postgres==2.*
+alembic==1.*
+
+# === Redis ===
+redis[hiredis]==5.*
+
+# === Scheduler ===
+apscheduler==3.*
+
+# === Utilities ===
+httpx==0.28.*
+structlog==24.*
+
+# === Testing ===
+pytest==8.*
+pytest-asyncio==0.24.*
+pytest-mock==3.*
+pytest-cov==5.*
