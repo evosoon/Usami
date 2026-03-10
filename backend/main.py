@@ -63,11 +63,10 @@ async def lifespan(app: FastAPI):
     checkpointer = None
     try:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-        async_db_url = config.database_url.replace(
-            "postgresql://", "postgresql+psycopg://"
-        )
-        checkpointer = AsyncPostgresSaver.from_conn_string(async_db_url)
+        checkpointer_cm = AsyncPostgresSaver.from_conn_string(config.database_url)
+        checkpointer = await checkpointer_cm.__aenter__()
         await checkpointer.setup()
+        app.state.checkpointer_cm = checkpointer_cm  # 保存 context manager 用于 cleanup
         logger.info("checkpoint_saver_initialized")
     except Exception as e:
         logger.warning("checkpoint_saver_skipped", error=str(e))
@@ -94,6 +93,13 @@ async def lifespan(app: FastAPI):
 
     # --- Shutdown ---
     scheduler.shutdown()
+
+    # Cleanup checkpointer context manager
+    if hasattr(app.state, 'checkpointer_cm'):
+        try:
+            await app.state.checkpointer_cm.__aexit__(None, None, None)
+        except Exception as e:
+            logger.warning("checkpointer_cleanup_failed", error=str(e))
 
 
 app = FastAPI(

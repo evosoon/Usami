@@ -1,33 +1,67 @@
 # ================================================
 # LiteLLM Model Router Configuration
-# 按任务复杂度路由到不同模型，优化成本
 # ================================================
 
 model_list:
   # --- 强模型: 复杂推理、规划、写作 ---
   - model_name: "strong"
     litellm_params:
-      model: "anthropic/claude-sonnet-4-20250514"
-      api_key: "os.environ/ANTHROPIC_API_KEY"
+      model: "openai/Vendor2/Claude-4.6-Opus"
+      api_key: "os.environ/OPENAI_API_KEY"
+      api_base: "os.environ/OPENAI_API_BASE"
 
-  # --- 中等模型: 信息整理、分析 ---
+  - model_name: "strong"
+    litellm_params:
+      model: "openai/Vendor2/GPT-5.4"
+      api_key: "os.environ/OPENAI_API_KEY"
+      api_base: "os.environ/OPENAI_API_BASE"
+
+  - model_name: "strong"
+    litellm_params:
+      model: "openai/Vendor2/Gemini-3.1-Pro"
+      api_key: "os.environ/OPENAI_API_KEY"
+      api_base: "os.environ/OPENAI_API_BASE"
+
+  # --- 中等模型: 信息整理、分析 (GPUGeek Gemini 为主) ---
   - model_name: "medium"
     litellm_params:
-      model: "openai/gpt-4o-mini"
+      model: "openai/Vendor2/Gemini-3.1-Pro"
       api_key: "os.environ/OPENAI_API_KEY"
+      api_base: "os.environ/OPENAI_API_BASE"
+
+  - model_name: "medium"
+    litellm_params:
+      model: "openai/Vendor2/GPT-5.4"
+      api_key: "os.environ/OPENAI_API_KEY"
+      api_base: "os.environ/OPENAI_API_BASE"
+
+  # NVIDIA 作为降级备选
+  - model_name: "medium"
+    litellm_params:
+      model: "openai/minimaxai/minimax-m2.1"
+      api_key: "os.environ/NVIDIA_API_KEY"
+      api_base: "os.environ/NVIDIA_API_BASE"
 
   # --- 轻量模型: 分类、路由、摘要 ---
   - model_name: "light"
     litellm_params:
-      model: "openai/gpt-4o-mini"
+      model: "openai/minimaxai/minimax-m2.1"
+      api_key: "os.environ/NVIDIA_API_KEY"
+      api_base: "os.environ/NVIDIA_API_BASE"
+
+  # GPUGeek Gemini 作为 light 层备选
+  - model_name: "light"
+    litellm_params:
+      model: "openai/Vendor2/Gemini-3.1-Pro"
       api_key: "os.environ/OPENAI_API_KEY"
+      api_base: "os.environ/OPENAI_API_BASE"
 
 # --- 路由策略 ---
 router_settings:
-  routing_strategy: "simple-shuffle"  # MVP: 同名模型间负载均衡
-  num_retries: 2
+  routing_strategy: "simple-shuffle"  # 同层级模型随机负载均衡
+  num_retries: 2  # 失败后重试 2 次，自动切换到备选模型
   timeout: 60
 
 # --- 成本追踪 ---
 general_settings:
-  master_key: "sk-agenticOS-dev"  # LiteLLM 管理密钥
+  master_key: "os.environ/LITELLM_MASTER_KEY"  # LiteLLM 管理密钥
