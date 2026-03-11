@@ -56,6 +56,13 @@ model_list:
       api_key: "os.environ/OPENAI_API_KEY"
       api_base: "os.environ/OPENAI_API_BASE"
 
+  # --- Embedding 模型: RAG 向量化 ---
+  - model_name: "embedding"
+    litellm_params:
+      model: "openai/text-embedding-3-small"
+      api_key: "os.environ/OPENAI_API_KEY"
+      api_base: "os.environ/OPENAI_API_BASE"
+
 # --- 路由策略 ---
 router_settings:
   routing_strategy: "simple-shuffle"  # 同层级模型随机负载均衡

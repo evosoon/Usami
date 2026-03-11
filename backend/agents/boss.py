@@ -186,6 +186,7 @@ def build_boss_graph(
                 options=["让 Boss 重新规划", "手动修改", "取消"],
             )
             return {
+                "task_plan": plan,
                 "hitl_pending": [hitl_req],
                 "current_phase": "hitl_waiting",
             }
@@ -199,25 +200,36 @@ def build_boss_graph(
             )
             if hitl_req:
                 return {
+                    "task_plan": plan,
                     "hitl_pending": [hitl_req],
                     "current_phase": "hitl_waiting",
                 }
 
-        return {"current_phase": "executing"}
+        return {"task_plan": plan, "current_phase": "executing"}
 
     # --- Node: Execute (调度 Persona 执行) ---
     async def execute_node(state: dict) -> dict:
         """按 DAG 顺序调度 Persona 执行子任务"""
-        plan: TaskPlan = state.get("task_plan")
+        plan_data = state.get("task_plan")
         completed_ids: set = state.get("completed_task_ids", set())
         task_outputs: dict = state.get("task_outputs", {})
+
+        # 处理 checkpoint 反序列化: task_plan 可能是 dict 或 Pydantic
+        if plan_data is None:
+            logger.error("execute_node_no_plan", state_keys=list(state.keys()))
+            return {"current_phase": "error"}
+
+        if isinstance(plan_data, dict):
+            plan = TaskPlan(**plan_data)
+        else:
+            plan = plan_data
 
         # 获取可执行的任务
         ready_tasks = plan.get_ready_tasks(completed_ids)
 
         if not ready_tasks:
             # 所有任务完成
-            return {"current_phase": "aggregating"}
+            return {"task_plan": plan, "task_outputs": task_outputs, "current_phase": "aggregating"}
 
         for task in ready_tasks:
             task.status = TaskStatus.RUNNING
@@ -248,7 +260,13 @@ def build_boss_graph(
                     ]
                 }
 
-                result = await persona_agent.ainvoke(persona_input)
+                # 限制 ReAct 迭代次数防止无限循环
+                logger.info("persona_invoking", persona=task.assigned_persona, task_id=task.task_id)
+                result = await persona_agent.ainvoke(
+                    persona_input,
+                    config={"recursion_limit": 10},
+                )
+                logger.info("persona_completed", persona=task.assigned_persona, task_id=task.task_id)
                 result_content = result["messages"][-1].content if result.get("messages") else ""
 
                 # 构建 TaskOutput（信封模式）
@@ -271,6 +289,7 @@ def build_boss_graph(
                 hitl_req = hitl_gateway.evaluate(output)
                 if hitl_req:
                     return {
+                        "task_plan": plan,
                         "task_outputs": task_outputs,
                         "completed_task_ids": completed_ids,
                         "hitl_pending": [hitl_req],
@@ -294,6 +313,7 @@ def build_boss_graph(
                 hitl_req = hitl_gateway.evaluate(output, retry_count=3)
                 if hitl_req:
                     return {
+                        "task_plan": plan,
                         "task_outputs": task_outputs,
                         "hitl_pending": [hitl_req],
                         "current_phase": "hitl_waiting",
@@ -304,6 +324,7 @@ def build_boss_graph(
         next_phase = "executing" if new_ready else "aggregating"
 
         return {
+            "task_plan": plan,
             "task_outputs": task_outputs,
             "completed_task_ids": completed_ids,
             "current_phase": next_phase,

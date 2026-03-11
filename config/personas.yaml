@@ -42,7 +42,7 @@ personas:
     model: "medium"
     tools:
       - "web_search"
-      - "knowledge_search"
+      # - "knowledge_search"  # TODO: 需要配置 embedding 模型 (GPUGeek 不支持)
 
   # --- Writer: 写作者 ---
   writer:
@@ -81,5 +81,5 @@ personas:
       - 与已有知识的连接点
       - 推荐的深入方向
     model: "strong"
-    tools:
-      - "knowledge_search"
+    tools: []
+      # - "knowledge_search"  # TODO: 需要配置 embedding 模型 (GPUGeek 不支持)
