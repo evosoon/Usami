@@ -26,6 +26,7 @@ sqlalchemy[asyncio]==2.*
 psycopg[binary]==3.*
 langgraph-checkpoint-postgres>=2.0.0
 alembic==1.*
+pgvector==0.3.*
 
 # === Redis ===
 redis[hiredis]==5.*

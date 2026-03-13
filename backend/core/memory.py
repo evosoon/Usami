@@ -14,6 +14,7 @@ import structlog
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import Column, String, Text, Float, DateTime, JSON, func
+from pgvector.sqlalchemy import Vector
 
 logger = structlog.get_logger()
 
@@ -72,6 +73,20 @@ class RoutingLog(Base):
     cost_usd = Column(Float, default=0)
     success = Column(String, default="true")
     created_at = Column(DateTime, server_default=func.now())
+
+
+class Document(Base):
+    """知识库文档 (RAG 向量检索)"""
+    __tablename__ = "documents"
+
+    id = Column(String, primary_key=True)
+    title = Column(String, nullable=False)
+    content = Column(Text, nullable=False)
+    source = Column(String)  # URL, file path, etc.
+    embedding = Column(Vector(1536))  # text-embedding-3-small dimension
+    metadata_ = Column("metadata", JSON, default=dict)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
 # ============================================

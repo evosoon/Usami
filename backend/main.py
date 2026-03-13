@@ -38,6 +38,23 @@ async def lifespan(app: FastAPI):
     # 初始化数据库
     await init_database(config.database_url)
 
+    # 初始化 Redis (非致命)
+    redis_client = None
+    try:
+        import redis.asyncio as aioredis
+        redis_client = aioredis.from_url(config.redis_url)
+        await redis_client.ping()
+        app.state.redis_client = redis_client
+        logger.info("redis_initialized")
+
+        # 初始化 EventBus (仅创建实例，MVP 暂不启动监听)
+        from scheduler.events import EventBus
+        app.state.event_bus = EventBus(redis_client)
+        logger.info("event_bus_initialized")
+    except Exception as e:
+        logger.warning("redis_init_skipped", error=str(e))
+        redis_client = None
+
     # 初始化 Tool Registry（多源加载）
     tool_registry = ToolRegistry()
     tool_registry.load_builtin_tools(config.tools)
@@ -59,7 +76,11 @@ async def lifespan(app: FastAPI):
     )
     app.state.hitl_gateway = hitl_gateway
 
-    # 构建 Boss Graph（带 Checkpoint 持久化）
+    # 初始化 WebSocket 连接管理器 (在 boss_graph 之前, 用于回调)
+    ws_manager = ConnectionManager()
+    app.state.ws_manager = ws_manager
+
+    # 构建 Boss Graph（带 Checkpoint 持久化 + WebSocket 事件回调）
     checkpointer = None
     try:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -71,21 +92,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("checkpoint_saver_skipped", error=str(e))
 
+    async def ws_event_callback(event_type: str, data: dict) -> None:
+        """Boss Graph → WebSocket 事件回调"""
+        await ws_manager.broadcast({"type": event_type, **data})
+
     boss_graph = build_boss_graph(
         persona_factory=persona_factory,
         hitl_gateway=hitl_gateway,
         checkpointer=checkpointer,
+        on_event=ws_event_callback,
     )
     app.state.boss_graph = boss_graph
 
-    # 初始化 WebSocket 连接管理器
-    app.state.ws_manager = ConnectionManager()
-
-    # 活跃任务追踪 (thread_id → asyncio.Task)
+    # 活跃任务追踪 (thread_id → {task, result, error, status})
     app.state.active_tasks: dict[str, Any] = {}
 
     # 初始化定时调度器
-    scheduler = init_scheduler(config.scheduler)
+    scheduler = init_scheduler(config.scheduler, boss_graph=boss_graph)
     scheduler.start()
     app.state.scheduler = scheduler
 
@@ -100,6 +123,13 @@ async def lifespan(app: FastAPI):
             await app.state.checkpointer_cm.__aexit__(None, None, None)
         except Exception as e:
             logger.warning("checkpointer_cleanup_failed", error=str(e))
+
+    # Cleanup Redis
+    if redis_client:
+        try:
+            await redis_client.close()
+        except Exception as e:
+            logger.warning("redis_cleanup_failed", error=str(e))
 
 
 app = FastAPI(
@@ -147,5 +177,9 @@ async def health(request: Request):
         checks["circuit_breaker"] = cb.state
         if cb.state == "open":
             checks["status"] = "degraded"
+
+    # Redis 状态
+    redis_client = getattr(request.app.state, "redis_client", None)
+    checks["redis"] = "ok" if redis_client else "unavailable"
 
     return checks

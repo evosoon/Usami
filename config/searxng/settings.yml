@@ -1,0 +1,34 @@
+# SearXNG Configuration
+# AgenticOS 自托管搜索引擎配置
+
+use_default_settings: true
+
+general:
+  instance_name: "AgenticOS Search"
+
+server:
+  bind_address: "0.0.0.0"
+  port: 8080
+  secret_key: "agenticOS-searxng-secret-change-in-production"
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "zh-CN"
+  formats:
+    - html
+    - json
+
+engines:
+  - name: google
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: wikipedia
+    disabled: false
+
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 30.0

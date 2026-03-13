@@ -44,3 +44,9 @@ node_modules/
 
 # Alembic
 alembic/versions/__pycache__/
+
+# Outputs
+outputs/
+
+# Claude Code (local settings)
+.claude/settings.local.json

@@ -8,6 +8,7 @@ MVP: APScheduler Cron 调度
 
 from __future__ import annotations
 
+import uuid
 import structlog
 from typing import Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -15,9 +16,15 @@ from apscheduler.triggers.cron import CronTrigger
 
 logger = structlog.get_logger()
 
+# 模块级引用: Boss Graph (通过 init_scheduler 注入)
+_boss_graph = None
 
-def init_scheduler(config: dict[str, Any]) -> AsyncIOScheduler:
+
+def init_scheduler(config: dict[str, Any], boss_graph=None) -> AsyncIOScheduler:
     """初始化定时调度器"""
+    global _boss_graph
+    _boss_graph = boss_graph
+
     scheduler = AsyncIOScheduler()
 
     # 从配置加载预定义的定时任务
@@ -53,7 +60,18 @@ def _register_task(scheduler: AsyncIOScheduler, task_cfg: dict) -> None:
 async def _execute_scheduled_task(intent: str, task_id: str) -> None:
     """执行定时触发的任务"""
     logger.info("scheduled_task_triggered", task_id=task_id, intent=intent)
-    
-    # TODO: 调用 Boss Graph 执行任务
-    # boss_graph = get_boss_graph()
-    # await boss_graph.ainvoke({"user_intent": intent})
+
+    if _boss_graph is None:
+        logger.error("scheduled_task_no_graph", task_id=task_id)
+        return
+
+    thread_id = f"scheduled_{task_id}_{uuid.uuid4().hex[:8]}"
+    config = {"configurable": {"thread_id": thread_id}}
+    try:
+        await _boss_graph.ainvoke(
+            {"user_intent": intent, "current_phase": "init", "thread_id": thread_id},
+            config=config,
+        )
+        logger.info("scheduled_task_completed", task_id=task_id, thread_id=thread_id)
+    except Exception as e:
+        logger.error("scheduled_task_execution_failed", task_id=task_id, error=str(e))

@@ -5,17 +5,17 @@
 
 builtin_tools:
   web_search:
-    description: "搜索互联网获取最新信息"
+    description: "搜索互联网获取最新信息（通过 SearXNG 自托管搜索引擎）"
     permission_level: 1  # L1: 只读
     requires_approval: false
 
   knowledge_search:
-    description: "从知识库中检索相关信息"
+    description: "从知识库中检索相关信息（RAG 向量检索，使用 pgvector）"
     permission_level: 1
     requires_approval: false
 
   file_write:
-    description: "写入文件（Markdown/JSON 等）"
+    description: "写入文件（限制 Markdown/JSON/YAML/TXT/CSV，路径安全验证）"
     permission_level: 2  # L2: 有副作用
     requires_approval: false
 

@@ -209,7 +209,7 @@ class ModelRouter:
         return ChatOpenAI(
             model=model_name,
             base_url=f"{self._litellm_url}/v1",
-            api_key="sk-agenticOS-dev",
+            api_key=os.getenv("LITELLM_MASTER_KEY", "sk-agenticOS-dev"),
             temperature=0.7,
         )
 
