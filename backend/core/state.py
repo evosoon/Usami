@@ -1,5 +1,5 @@
 """
-AgenticOS — 全局 State Schema
+Usami — 全局 State Schema
 Pre-mortem F3 修正: 结构化消息传递，非全局大 dict
 
 设计原则:
@@ -107,7 +107,7 @@ class HiTLResponse(BaseModel):
 
 
 # ============================================
-# AgenticOS Global State (LangGraph State)
+# Usami Global State (LangGraph State)
 # ============================================
 
 class AgentState(BaseModel):

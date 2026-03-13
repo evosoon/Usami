@@ -1,5 +1,5 @@
 """
-AgenticOS — WebSocket 单元测试
+Usami — WebSocket 单元测试
 测试 ConnectionManager + WebSocket 事件处理
 """
 

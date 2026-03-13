@@ -1,5 +1,5 @@
 """
-AgenticOS — Plan Validator
+Usami — Plan Validator
 Pre-mortem F2 修正: Boss 生成 Plan 后，确定性代码做正确性验证
 
 设计原则:

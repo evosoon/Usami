@@ -1,5 +1,5 @@
 """
-AgenticOS — HiTL Gateway 单元测试
+Usami — HiTL Gateway 单元测试
 """
 
 from __future__ import annotations

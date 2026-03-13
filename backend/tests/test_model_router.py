@@ -1,5 +1,5 @@
 """
-AgenticOS — ModelRouter + CircuitBreaker 单元测试
+Usami — ModelRouter + CircuitBreaker 单元测试
 """
 
 from __future__ import annotations

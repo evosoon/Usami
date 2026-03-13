@@ -1,5 +1,5 @@
 """
-AgenticOS — Memory Store
+Usami — Memory Store
 数据库初始化 + 持久化抽象
 
 MVP 阶段:

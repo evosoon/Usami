@@ -1,5 +1,5 @@
 """
-AgenticOS — Model Router
+Usami — Model Router
 按任务类型路由到不同模型，优化成本
 
 Pre-mortem F4 修正: 每次路由决策记录日志，为未来智能路由埋数据管道

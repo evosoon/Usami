@@ -1,5 +1,5 @@
 """
-AgenticOS — Boss Graph 单元测试
+Usami — Boss Graph 单元测试
 测试 build_boss_graph + node 函数 (mock LLM)
 """
 

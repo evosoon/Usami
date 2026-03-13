@@ -10,7 +10,11 @@ Personal AI Operating System — multi-agent orchestration for technical researc
 
 ## Code style
 
-- Language: Python code and comments in English. User-facing strings (prompts, error messages) in Chinese.
+- Language rules (follow strictly):
+  - **English**: Python code, comments, variable/function names, log event names, LLM prompt templates, CLAUDE.md files, skill files, YAML config keys, commit messages
+  - **Chinese**: Error messages shown to end users, UI text
+  - When unsure, default to English
+- **Prompt centralization**: All LLM prompt templates live in `backend/agents/prompts.py`. No inline prompt strings in agent code. See `backend/CLAUDE.md` "Prompt conventions" for details.
 - Logging: `structlog` only. Every log call uses keyword args: `logger.info("event_name", key=value)`.
 - Models: Pydantic BaseModel for all data schemas. Define in `core/state.py`.
 - Async: All I/O is async. Use `async def` + `await`. No blocking calls in async context.
@@ -20,20 +24,22 @@ Personal AI Operating System — multi-agent orchestration for technical researc
 
 ## Commands
 
+This project uses `uv` for dependency management. **Always use `uv run` to execute Python commands** — do NOT use bare `python` or `python3` (system Python lacks project deps).
+
 ```bash
 # Start all services (Docker)
 docker compose up -d
 
 # Run backend locally (from backend/)
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 
-# Tests
-python -m pytest tests/ -v
-python -m pytest tests/ -v --cov=core --cov=api --cov-report=term-missing
+# Tests (MUST use uv run)
+uv run python -m pytest backend/tests/ -v --tb=short
+uv run python -m pytest backend/tests/ -v --cov=core --cov=api --cov-report=term-missing
 
 # Database migration
-alembic upgrade head                          # apply
-alembic revision --autogenerate -m "msg"      # create new
+uv run alembic upgrade head                          # apply
+uv run alembic revision --autogenerate -m "msg"      # create new
 
 # Health check
 curl http://localhost:8000/health

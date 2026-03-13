@@ -1,5 +1,5 @@
 """
-AgenticOS — PlanValidator 单元测试
+Usami — PlanValidator 单元测试
 """
 
 from __future__ import annotations

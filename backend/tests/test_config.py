@@ -1,5 +1,5 @@
 """
-AgenticOS — Config 单元测试
+Usami — Config 单元测试
 测试 YAML 加载 + 环境变量回退
 """
 

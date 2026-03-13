@@ -1,5 +1,5 @@
 """
-AgenticOS — Tool Registry 单元测试
+Usami — Tool Registry 单元测试
 """
 
 from __future__ import annotations

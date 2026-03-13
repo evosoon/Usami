@@ -1,5 +1,5 @@
 """
-AgenticOS — Personal AI Operating System
+Usami — Personal AI Operating System
 FastAPI 入口文件
 
 启动方式: uvicorn main:app --reload
@@ -133,7 +133,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="AgenticOS",
+    title="Usami",
     description="Personal AI Operating System — 技术调研 + 知识凝练",
     version="0.1.0",
     lifespan=lifespan,
@@ -156,7 +156,7 @@ app.include_router(ws_router, prefix="/ws")
 @app.get("/health")
 async def health(request: Request):
     """健康检查 — 含 LiteLLM 连通性 + 断路器状态"""
-    checks: dict[str, Any] = {"service": "AgenticOS", "status": "ok"}
+    checks: dict[str, Any] = {"service": "Usami", "status": "ok"}
 
     # LiteLLM 连通性
     litellm_url = getattr(request.app.state, "config", None)

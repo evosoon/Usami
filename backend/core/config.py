@@ -1,5 +1,5 @@
 """
-AgenticOS — Configuration Loader
+Usami — Configuration Loader
 从 YAML 配置文件加载所有系统配置
 """
 

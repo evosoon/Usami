@@ -1,5 +1,5 @@
 """
-AgenticOS — Cron Scheduler
+Usami — Cron Scheduler
 定时任务调度 + 事件驱动触发
 
 MVP: APScheduler Cron 调度

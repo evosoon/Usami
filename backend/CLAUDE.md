@@ -21,7 +21,8 @@ backend/
 │   ├── hitl.py              # HiTL gateway (confidence/cost/retry triggers)
 │   └── memory.py            # SQLAlchemy models + DB init (Alembic)
 ├── agents/
-│   └── boss.py              # Boss supervisor graph (planning -> validate -> execute -> aggregate)
+│   ├── boss.py              # Boss supervisor graph (planning -> validate -> execute -> aggregate)
+│   └── prompts.py           # All prompt templates and message constants (Boss + HiTL)
 ├── api/
 │   ├── routes.py            # REST endpoints (POST /tasks, GET /tasks/{id}, POST /tasks/{id}/hitl)
 │   └── websocket.py         # WS /ws/{client_id} + ConnectionManager
@@ -47,7 +48,8 @@ tool_registry.py  <- (standalone, uses langchain_core.tools)
 plan_validator.py <- state.py
 hitl.py           <- state.py
 persona_factory.py <- tool_registry, model_router
-boss.py           <- state, plan_validator, hitl, persona_factory
+prompts.py        <- (no deps, pure string constants)
+boss.py           <- state, plan_validator, hitl, persona_factory, prompts
 routes.py         <- state (HiTLResponse only)
 websocket.py      <- state (HiTLResponse only)
 main.py           <- everything
@@ -69,14 +71,22 @@ Checkpoint values are plain dicts. When reading state via `aget_state()`, fields
 plan_dict = task_plan.model_dump() if hasattr(task_plan, "model_dump") else task_plan
 ```
 
-### Error messages are in Chinese
+### User-facing strings are in Chinese
 
-`plan_validator.py` returns Chinese strings. Tests must assert against these exact strings:
-- `"任务计划为空"`
-- `"存在重复的任务 ID"`
-- `"不存在的 Persona"`
-- `"依赖不存在的任务"`
-- `"检测到循环依赖"`
+User-facing strings remain Chinese per language rules. LLM prompt templates are English.
+
+**Chinese** (user-facing, do not translate):
+- `plan_validator.py` error messages: `"任务计划为空"`, `"存在重复的任务 ID"`, `"不存在的 Persona"`, `"依赖不存在的任务"`, `"检测到循环依赖"`
+- `hitl.py` titles, descriptions, and options
+- `tool_registry.py` tool return messages
+- `agents/prompts.py` `HITL_*` constants
+
+**English** (LLM instructions):
+- `agents/prompts.py` `BOSS_*`, `TASK_*`, `*_SYSTEM_MESSAGE` constants
+- `config/personas.yaml` system_prompt and description fields
+- `config/tools.yaml` tool descriptions
+
+Tests must assert against the exact Chinese strings in plan_validator.py.
 
 ### HiTL trigger thresholds (hardcoded in hitl.py)
 
@@ -109,6 +119,8 @@ Checkpointer failure is non-fatal — system runs without persistence.
 
 ## Testing rules
 
+- **Run tests**: `uv run python -m pytest backend/tests/ -v --tb=short` (From the project root directory). Never use bare `python`/`python3` — system Python lacks project deps.
+- **With coverage**: `uv run python -m pytest backend/tests/ -v --cov=core --cov=api --cov-report=term-missing`
 - Fixtures in `conftest.py`: reuse `validator`, `hitl_gateway`, `simple_plan`, `task_output_*`, `app_client`.
 - `app_client` fixture mocks `boss_graph`, `persona_factory`, `config`, `tool_registry`, `scheduler`. Imports `from main import app` — requires all transitive deps installed.
 - `asyncio_mode = auto` in pytest.ini — no need for `@pytest.mark.asyncio` on test functions using async fixtures.
@@ -130,3 +142,20 @@ Checkpointer failure is non-fatal — system runs without persistence.
 - **Don't** use `class Config:` in new Pydantic models — use `model_config = ConfigDict(...)` (V2 style). Existing `AgentState` uses deprecated V1 style.
 - **Don't** import heavy modules (langgraph, langchain) at module top level in test files — use lazy imports or ensure deps are installed.
 - **Don't** add `send_notification` tool calls — it's declared in tools.yaml but has no implementation in BUILTIN_TOOL_MAP.
+
+## Prompt conventions
+
+All LLM prompt templates live in `agents/prompts.py`. No inline prompt strings in boss.py or other agent files.
+
+### Rules
+- **Language**: All prompt templates in English. LLM output language is NOT hardcoded — the LLM responds in the user's language naturally.
+- **User-facing strings** (HiTL titles, options, error messages shown to users): Chinese. Prefixed with `HITL_*` in prompts.py.
+- **Naming**: `UPPER_SNAKE_CASE` constants. Group by function: `BOSS_*` for boss prompts, `HITL_*` for HiTL messages, `TASK_*` for task execution.
+- **Template variables**: Use `{variable_name}` (Python str.format). Document each variable in a comment above the constant.
+- **No output language instruction**: Do NOT add "respond in Chinese" or "respond in English" to prompts. Let the LLM follow the user's language.
+- **Separation**: Prompts contain zero Python logic. boss.py contains zero prompt text.
+
+### Adding a new prompt
+1. Define constant in `agents/prompts.py`
+2. Import in the agent file that uses it
+3. Use `.format()` to fill template variables

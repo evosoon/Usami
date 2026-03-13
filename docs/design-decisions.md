@@ -1,4 +1,4 @@
-# AgenticOS — Design Decisions Record
+# Usami — Design Decisions Record
 
 > 每一个架构决策都有对应的「死因预防」编号（F1-F9），
 > 来自项目启动前的 Pre-mortem 分析。

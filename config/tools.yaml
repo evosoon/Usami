@@ -1,41 +1,41 @@
 # ================================================
-# 工具注册配置
-# 内置工具 + MCP Server 声明
+# Tool registration config
+# Built-in tools + MCP Server declarations
 # ================================================
 
 builtin_tools:
   web_search:
-    description: "搜索互联网获取最新信息（通过 SearXNG 自托管搜索引擎）"
-    permission_level: 1  # L1: 只读
+    description: "Search the internet for latest information (via self-hosted SearXNG engine)"
+    permission_level: 1  # L1: read-only
     requires_approval: false
 
   knowledge_search:
-    description: "从知识库中检索相关信息（RAG 向量检索，使用 pgvector）"
+    description: "Retrieve relevant information from knowledge base (RAG vector search using pgvector)"
     permission_level: 1
     requires_approval: false
 
   file_write:
-    description: "写入文件（限制 Markdown/JSON/YAML/TXT/CSV，路径安全验证）"
-    permission_level: 2  # L2: 有副作用
+    description: "Write files (restricted to Markdown/JSON/YAML/TXT/CSV, path safety validated)"
+    permission_level: 2  # L2: side-effect
     requires_approval: false
 
-# --- MCP Server 接入 (MVP 可选) ---
+# --- MCP Server integration (optional for MVP) ---
 mcp_servers: {}
-  # 取消注释以接入 MCP Server:
+  # Uncomment to connect MCP Servers:
   # github:
   #   transport: "http"
   #   url: "http://localhost:3001/mcp"
   #   permission_level: 2
   #   requires_approval: false
-  # 
+  #
   # filesystem:
   #   transport: "stdio"
   #   command: "npx"
   #   args: ["-y", "@modelcontextprotocol/server-filesystem", "/data"]
   #   permission_level: 4
-  #   requires_approval: true  # L4 强制审批
+  #   requires_approval: true  # L4 requires mandatory approval
 
-# --- Sandbox (MVP 关闭) ---
+# --- Sandbox (disabled for MVP) ---
 sandbox:
   enabled: false
   # image: "agenticOS-sandbox:latest"

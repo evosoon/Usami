@@ -1,5 +1,5 @@
 """
-AgenticOS — Event Bus
+Usami — Event Bus
 Redis Pub/Sub 事件驱动触发
 
 MVP: Webhook → Redis Pub/Sub → Agent 唤醒

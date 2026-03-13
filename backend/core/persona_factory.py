@@ -1,5 +1,5 @@
 """
-AgenticOS — Persona Factory
+Usami — Persona Factory
 Pre-mortem F5 修正: 配置驱动，一个工厂函数 + YAML = 无限 Persona
 
 设计原则:

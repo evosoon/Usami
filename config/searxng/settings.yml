@@ -1,10 +1,10 @@
 # SearXNG Configuration
-# AgenticOS 自托管搜索引擎配置
+# Usami 自托管搜索引擎配置
 
 use_default_settings: true
 
 general:
-  instance_name: "AgenticOS Search"
+  instance_name: "Usami Search"
 
 server:
   bind_address: "0.0.0.0"

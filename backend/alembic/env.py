@@ -1,5 +1,5 @@
 """
-AgenticOS — Alembic env.py
+Usami — Alembic env.py
 使用同步 psycopg 驱动执行迁移
 """
 

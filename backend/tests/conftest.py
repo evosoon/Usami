@@ -1,5 +1,5 @@
 """
-AgenticOS — 测试 Fixtures
+Usami — 测试 Fixtures
 """
 
 from __future__ import annotations

@@ -1,5 +1,5 @@
 """
-AgenticOS — WebSocket Handler
+Usami — WebSocket Handler
 实时通信: Agent 执行状态推送 + HiTL 交互
 """
 

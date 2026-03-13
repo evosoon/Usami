@@ -1,5 +1,5 @@
 """
-AgenticOS — Tool Registry (多源加载)
+Usami — Tool Registry (多源加载)
 Pre-mortem F5 修正: 扩展性评估中的关键升级
 
 设计原则:

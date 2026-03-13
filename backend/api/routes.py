@@ -1,5 +1,5 @@
 """
-AgenticOS — REST API Routes
+Usami — REST API Routes
 """
 
 from __future__ import annotations

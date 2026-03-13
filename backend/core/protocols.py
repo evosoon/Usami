@@ -1,8 +1,8 @@
 """
-AgenticOS — Runtime Protocol (薄抽象层)
+Usami — Runtime Protocol (薄抽象层)
 Pre-mortem F1 修正: 依赖抽象，不依赖 LangGraph 实现
 
-这一层定义了 AgenticOS 核心运行时的接口契约。
+这一层定义了 Usami 核心运行时的接口契约。
 当前唯一实现是 LangGraph，但未来可替换为任何
 符合协议的 Runtime（OpenAI Agents SDK、自建等）。
 

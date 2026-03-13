@@ -1,5 +1,5 @@
 """
-AgenticOS — HiTL Gateway
+Usami — HiTL Gateway
 Pre-mortem F2 修正: Exception-only 触发 + 日志埋点
 
 设计原则:
