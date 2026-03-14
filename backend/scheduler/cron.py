@@ -9,8 +9,9 @@ MVP: APScheduler Cron 调度
 from __future__ import annotations
 
 import uuid
-import structlog
 from typing import Any
+
+import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 

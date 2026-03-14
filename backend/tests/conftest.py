@@ -4,17 +4,18 @@ Usami — 测试 Fixtures
 
 from __future__ import annotations
 
-import pytest
-import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-from core.state import (
-    Task, TaskPlan, TaskOutput, TaskStatus,
-    HiTLRequest, HiTLResponse, HiTLType,
-)
-from core.plan_validator import PlanValidator
-from core.hitl import HiTLGateway
+import pytest
+import pytest_asyncio
 
+from core.hitl import HiTLGateway
+from core.plan_validator import PlanValidator
+from core.state import (
+    Task,
+    TaskOutput,
+    TaskPlan,
+)
 
 # ============================================
 # Persona & Validator Fixtures
@@ -97,7 +98,7 @@ def task_output_low_confidence() -> TaskOutput:
 @pytest_asyncio.fixture
 async def app_client():
     """FastAPI 测试客户端 — mock boss_graph 和其他依赖"""
-    from httpx import AsyncClient, ASGITransport
+    from httpx import ASGITransport, AsyncClient
 
     # 延迟导入避免启动副作用
     from main import app

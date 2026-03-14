@@ -8,13 +8,13 @@ HA 加固: 指数退避重试 + 断路器
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
-import asyncio
-import structlog
-from typing import Any
 from dataclasses import dataclass
+from typing import Any
 
+import structlog
 from langchain_openai import ChatOpenAI
 
 logger = structlog.get_logger()
@@ -71,10 +71,9 @@ class CircuitBreaker:
 
     @property
     def state(self) -> str:
-        if self._state == self.OPEN:
-            if time.time() - self._last_failure_time >= self._recovery_timeout:
-                self._state = self.HALF_OPEN
-                self._half_open_calls = 0
+        if self._state == self.OPEN and time.time() - self._last_failure_time >= self._recovery_timeout:
+            self._state = self.HALF_OPEN
+            self._half_open_calls = 0
         return self._state
 
     def record_success(self) -> None:

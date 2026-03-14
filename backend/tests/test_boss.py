@@ -5,14 +5,15 @@ Usami — Boss Graph 单元测试
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+
 from agents.boss import build_boss_graph
-from core.state import TaskPlan, Task, TaskStatus, TaskOutput
-from core.plan_validator import PlanValidator
 from core.hitl import HiTLGateway
 from core.persona_factory import PersonaFactory
-
+from core.plan_validator import PlanValidator
+from core.state import Task, TaskPlan, TaskStatus
 
 # ============================================
 # Fixtures

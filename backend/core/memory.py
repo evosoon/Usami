@@ -9,12 +9,11 @@ MVP 阶段:
 
 from __future__ import annotations
 
-import os
 import structlog
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import Column, String, Text, Float, DateTime, JSON, func
 from pgvector.sqlalchemy import Vector
+from sqlalchemy import JSON, Column, DateTime, Float, String, Text, func
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase
 
 logger = structlog.get_logger()
 
@@ -109,7 +108,9 @@ async def init_database(database_url: str) -> None:
 
     # 使用 Alembic 管理 schema（同步 psycopg 驱动）
     from pathlib import Path
+
     from alembic.config import Config
+
     from alembic import command
 
     alembic_ini = Path(__file__).parent.parent / "alembic.ini"

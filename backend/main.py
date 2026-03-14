@@ -15,14 +15,15 @@ import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import router as api_router
-from api.websocket import router as ws_router, ConnectionManager
-from core.config import load_config
-from core.memory import init_database
-from core.tool_registry import ToolRegistry
-from core.persona_factory import PersonaFactory
-from core.hitl import HiTLGateway
 from agents.boss import build_boss_graph
+from api.routes import router as api_router
+from api.websocket import ConnectionManager
+from api.websocket import router as ws_router
+from core.config import load_config
+from core.hitl import HiTLGateway
+from core.memory import init_database
+from core.persona_factory import PersonaFactory
+from core.tool_registry import ToolRegistry
 from scheduler.cron import init_scheduler
 
 logger = structlog.get_logger()

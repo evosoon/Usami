@@ -4,14 +4,9 @@ Usami — Tool Registry 单元测试
 
 from __future__ import annotations
 
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from core.tool_registry import (
-    web_search, knowledge_search, file_write,
-    ToolRegistry, ToolSpec, BUILTIN_TOOL_MAP
-)
-
+from core.tool_registry import BUILTIN_TOOL_MAP, ToolRegistry, file_write, web_search
 
 # ============================================
 # web_search 测试

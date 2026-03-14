@@ -5,9 +5,7 @@ Usami — State Schema 单元测试
 
 from __future__ import annotations
 
-import pytest
-from core.state import TaskPlan, Task, TaskStatus, TaskOutput, AgentState
-
+from core.state import AgentState, Task, TaskOutput, TaskPlan, TaskStatus
 
 # ============================================
 # get_ready_tasks()

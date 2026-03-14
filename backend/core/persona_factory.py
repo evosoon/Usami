@@ -10,14 +10,13 @@ Pre-mortem F5 修正: 配置驱动，一个工厂函数 + YAML = 无限 Persona
 
 from __future__ import annotations
 
-import structlog
 from typing import Any
 
-from langchain_core.messages import SystemMessage
+import structlog
 from langgraph.prebuilt import create_react_agent
 
-from core.tool_registry import ToolRegistry
 from core.model_router import ModelRouter
+from core.tool_registry import ToolRegistry
 
 logger = structlog.get_logger()
 
@@ -25,7 +24,7 @@ logger = structlog.get_logger()
 class PersonaFactory:
     """
     Persona 工厂 — 配置驱动的 Agent 创建
-    
+
     从 personas.yaml 读取定义，动态创建可执行的 Agent。
     每个 Persona 是一个 LangGraph ReAct Agent (SubGraph)。
     """
@@ -40,7 +39,7 @@ class PersonaFactory:
         self._tool_registry = tool_registry
         self._model_router = ModelRouter(model_router_config)
         self._personas: dict[str, Any] = {}
-        
+
         # 预创建所有 Persona
         self._build_all()
 

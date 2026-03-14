@@ -12,7 +12,6 @@ from typing import Any
 
 import yaml
 
-
 CONFIG_DIR = Path(__file__).parent.parent / "config"
 
 
@@ -44,18 +43,18 @@ def load_yaml(filename: str) -> dict:
     filepath = CONFIG_DIR / filename
     if not filepath.exists():
         return {}
-    with open(filepath, "r", encoding="utf-8") as f:
+    with open(filepath, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
 def load_config() -> AppConfig:
     """加载全部配置，合并环境变量"""
-    
+
     # 加载 YAML 配置
     personas_cfg = load_yaml("personas.yaml")
     tools_cfg = load_yaml("tools.yaml")
     routing_cfg = load_yaml("routing.yaml")
-    
+
     return AppConfig(
         database_url=os.getenv("DATABASE_URL", "postgresql://agenticOS:agenticOS@localhost:5432/agenticOS"),
         redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),

@@ -10,7 +10,8 @@ Pre-mortem F2 修正: Boss 生成 Plan 后，确定性代码做正确性验证
 from __future__ import annotations
 
 import structlog
-from core.state import TaskPlan, Task
+
+from core.state import Task, TaskPlan
 
 logger = structlog.get_logger()
 
@@ -18,7 +19,7 @@ logger = structlog.get_logger()
 class PlanValidator:
     """
     任务计划验证器 — 确定性校验 Boss 的推理输出
-    
+
     检查项:
     1. DAG 无循环依赖
     2. 目标 Persona 存在
@@ -33,7 +34,7 @@ class PlanValidator:
     def validate(self, plan: TaskPlan) -> tuple[bool, list[str]]:
         """
         验证任务计划
-        
+
         Returns:
             (is_valid, error_messages)
         """
@@ -86,20 +87,17 @@ class PlanValidator:
     def should_require_hitl_preview(self, plan: TaskPlan) -> bool:
         """
         判断计划是否足够复杂，需要人类预览
-        
+
         规则:
         - 任务数 > 5 → 建议预览
         - 存在 3 层以上依赖链 → 建议预览
         """
         if len(plan.tasks) > 5:
             return True
-        
+
         # 检查最长依赖链深度
         max_depth = self._max_dependency_depth(plan.tasks)
-        if max_depth > 3:
-            return True
-        
-        return False
+        return max_depth > 3
 
     def _detect_cycle(self, tasks: list[Task]) -> list[str] | None:
         """拓扑排序检测循环依赖"""
@@ -126,13 +124,12 @@ class PlanValidator:
             return False
 
         for task_id in graph:
-            if task_id not in visited:
-                if dfs(task_id):
-                    # 提取循环部分
-                    cycle_start = path[-1]
-                    cycle_idx = path.index(cycle_start)
-                    return path[cycle_idx:]
-        
+            if task_id not in visited and dfs(task_id):
+                # 提取循环部分
+                cycle_start = path[-1]
+                cycle_idx = path.index(cycle_start)
+                return path[cycle_idx:]
+
         return None
 
     def _max_dependency_depth(self, tasks: list[Task]) -> int:

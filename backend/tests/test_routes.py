@@ -5,10 +5,9 @@ Usami — REST API 集成测试
 
 from __future__ import annotations
 
-import pytest
-import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 
 # ============================================
 # POST /api/v1/tasks

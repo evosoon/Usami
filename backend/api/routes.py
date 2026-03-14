@@ -4,11 +4,11 @@ Usami — REST API Routes
 
 from __future__ import annotations
 
-import uuid
 import asyncio
+import uuid
 
 import structlog
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 logger = structlog.get_logger()
@@ -220,7 +220,7 @@ async def resolve_hitl(
 
         return {"status": "resumed", "request_id": req.request_id}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/personas")

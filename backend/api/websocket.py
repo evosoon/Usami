@@ -6,7 +6,9 @@ Usami — WebSocket Handler
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -39,10 +41,8 @@ class ConnectionManager:
     async def broadcast(self, event: dict):
         """广播事件给所有连接"""
         for ws in self.active_connections.values():
-            try:
+            with contextlib.suppress(Exception):
                 await ws.send_json(event)
-            except Exception:
-                pass
 
 
 @router.websocket("/{client_id}")
@@ -96,13 +96,13 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                         "current_phase": "executing",
                     })
 
-                    async def _resume():
+                    async def _resume(graph=boss_graph, cfg=config):
                         try:
-                            await boss_graph.ainvoke(None, config=config)
+                            await graph.ainvoke(None, config=cfg)
                         except Exception as e:
                             logger.error("ws_hitl_resume_failed", error=str(e))
 
-                    asyncio.create_task(_resume())
+                    _task = asyncio.create_task(_resume())  # noqa: RUF006
 
             elif event_type == "task.cancel":
                 thread_id = event.get("thread_id")

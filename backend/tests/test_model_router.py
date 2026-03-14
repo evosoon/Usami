@@ -5,11 +5,11 @@ Usami — ModelRouter + CircuitBreaker 单元测试
 from __future__ import annotations
 
 import time
+from unittest.mock import AsyncMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
-from core.model_router import ModelRouter, CircuitBreaker, _retry_with_backoff
-
+from core.model_router import CircuitBreaker, ModelRouter, _retry_with_backoff
 
 # ============================================
 # CircuitBreaker 状态转换

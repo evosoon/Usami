@@ -5,10 +5,11 @@ Usami — WebSocket 单元测试
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
-from api.websocket import ConnectionManager
 
+import pytest
+
+from api.websocket import ConnectionManager
 
 # ============================================
 # ConnectionManager 测试

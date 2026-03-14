@@ -4,10 +4,8 @@ Usami — HiTL Gateway 单元测试
 
 from __future__ import annotations
 
-import pytest
-from core.state import TaskOutput, HiTLType
 from core.hitl import HiTLGateway
-
+from core.state import HiTLType, TaskOutput
 
 # ============================================
 # evaluate() — 触发与静默

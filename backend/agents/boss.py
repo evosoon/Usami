@@ -12,39 +12,38 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Callable
+from typing import Any
+
 import structlog
-from typing import Any, Callable, Literal
-
 from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.graph import StateGraph, START, END
-from langgraph.types import Command, interrupt
+from langgraph.graph import END, START, StateGraph
 
-from core.state import (
-    AgentState,
-    TaskPlan,
-    Task,
-    TaskStatus,
-    TaskOutput,
-    HiTLType,
-)
-from core.plan_validator import PlanValidator
-from core.hitl import HiTLGateway
-from core.persona_factory import PersonaFactory
 from agents.prompts import (
-    BOSS_PLANNING_PROMPT,
-    BOSS_AGGREGATION_PROMPT,
-    PLANNING_SYSTEM_MESSAGE,
     AGGREGATION_SYSTEM_MESSAGE,
-    TASK_EXECUTION_TEMPLATE,
-    UPSTREAM_RESULT_BLOCK,
-    UPSTREAM_CONTEXT_HEADER,
-    PERSONA_LIST_LINE,
+    BOSS_AGGREGATION_PROMPT,
+    BOSS_PLANNING_PROMPT,
     FALLBACK_TASK_TITLE,
     FINAL_REPORT_SUMMARY,
-    TASK_EXECUTION_FAILED_SUMMARY,
-    HITL_PLAN_VALIDATION_TITLE,
     HITL_PLAN_VALIDATION_DESC,
     HITL_PLAN_VALIDATION_OPTIONS,
+    HITL_PLAN_VALIDATION_TITLE,
+    PERSONA_LIST_LINE,
+    PLANNING_SYSTEM_MESSAGE,
+    TASK_EXECUTION_FAILED_SUMMARY,
+    TASK_EXECUTION_TEMPLATE,
+    UPSTREAM_CONTEXT_HEADER,
+    UPSTREAM_RESULT_BLOCK,
+)
+from core.hitl import HiTLGateway
+from core.persona_factory import PersonaFactory
+from core.plan_validator import PlanValidator
+from core.state import (
+    HiTLType,
+    Task,
+    TaskOutput,
+    TaskPlan,
+    TaskStatus,
 )
 
 logger = structlog.get_logger()
@@ -205,10 +204,7 @@ def build_boss_graph(
             logger.error("execute_node_no_plan", state_keys=list(state.keys()))
             return {"current_phase": "error"}
 
-        if isinstance(plan_data, dict):
-            plan = TaskPlan(**plan_data)
-        else:
-            plan = plan_data
+        plan = TaskPlan(**plan_data) if isinstance(plan_data, dict) else plan_data
 
         ready_tasks = plan.get_ready_tasks(completed_ids)
 

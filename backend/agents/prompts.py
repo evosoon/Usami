@@ -5,7 +5,6 @@ Centralized prompt templates for Boss orchestration and task execution.
 
 from __future__ import annotations
 
-
 # ============================================
 # Boss Planning Prompts
 # ============================================

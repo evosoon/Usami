@@ -10,10 +10,11 @@ Pre-mortem F2 修正: Exception-only 触发 + 日志埋点
 
 from __future__ import annotations
 
-import uuid
 import time
-import structlog
+import uuid
 from typing import Any
+
+import structlog
 
 from core.state import HiTLRequest, HiTLType, TaskOutput
 
@@ -23,7 +24,7 @@ logger = structlog.get_logger()
 class HiTLGateway:
     """
     HiTL Gateway — 人类介入的守门员
-    
+
     MVP: Exception-only（不确定/出错时才触发）
     未来: Progressive Trust（学习用户审批模式，自动化放行）
     """
@@ -47,7 +48,7 @@ class HiTLGateway:
     ) -> HiTLRequest | None:
         """
         评估是否需要触发 HiTL
-        
+
         Returns:
             HiTLRequest if intervention needed, None otherwise
         """

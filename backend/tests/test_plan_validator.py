@@ -4,10 +4,7 @@ Usami — PlanValidator 单元测试
 
 from __future__ import annotations
 
-import pytest
-from core.state import TaskPlan, Task
-from core.plan_validator import PlanValidator
-
+from core.state import Task, TaskPlan
 
 # ============================================
 # validate() — 正常场景

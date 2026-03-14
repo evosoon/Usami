@@ -10,16 +10,16 @@ Pre-mortem F3 修正: 结构化消息传递，非全局大 dict
 
 from __future__ import annotations
 
-from enum import Enum
-from typing import Any, Optional
-from pydantic import BaseModel, Field
+from enum import StrEnum
+from typing import Any
 
+from pydantic import BaseModel
 
 # ============================================
 # Task & Plan Schema
 # ============================================
 
-class TaskStatus(str, Enum):
+class TaskStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -45,7 +45,7 @@ class TaskPlan(BaseModel):
     plan_id: str
     user_intent: str
     tasks: list[Task]
-    
+
     def get_ready_tasks(self, completed_ids: set[str]) -> list[Task]:
         """获取所有依赖已满足、可以执行的任务"""
         return [
@@ -78,7 +78,7 @@ class TaskOutput(BaseModel):
 # HiTL Event Schema
 # ============================================
 
-class HiTLType(str, Enum):
+class HiTLType(StrEnum):
     CLARIFICATION = "clarification"   # 需要用户澄清意图
     APPROVAL = "approval"             # 需要用户批准操作
     CONFLICT = "conflict"             # 信息冲突，需要用户判断
@@ -94,8 +94,8 @@ class HiTLRequest(BaseModel):
     description: str
     context: dict[str, Any] = {}   # 相关上下文
     options: list[str] = []         # 可选操作
-    task_id: Optional[str] = None   # 关联的任务
-    persona: Optional[str] = None   # 发起请求的 Persona
+    task_id: str | None = None   # 关联的任务
+    persona: str | None = None   # 发起请求的 Persona
 
 
 class HiTLResponse(BaseModel):
@@ -113,7 +113,7 @@ class HiTLResponse(BaseModel):
 class AgentState(BaseModel):
     """
     LangGraph 全局状态对象
-    
+
     设计原则 (F3 修正):
     - global_context: 所有 Agent 可见的全局信息
     - task_outputs: 按 task_id 隔离的输出（信封模式）
@@ -122,23 +122,23 @@ class AgentState(BaseModel):
     """
     # --- 全局上下文 ---
     user_intent: str = ""
-    task_plan: Optional[TaskPlan] = None
+    task_plan: TaskPlan | None = None
     current_phase: str = "init"   # init → planning → executing → aggregating → done
-    
+
     # --- 任务输出 (信封模式) ---
     task_outputs: dict[str, TaskOutput] = {}
     completed_task_ids: set[str] = set()
-    
+
     # --- HiTL ---
     hitl_pending: list[HiTLRequest] = []
     hitl_resolved: list[HiTLResponse] = []
-    
+
     # --- 执行日志 (F8 修正: 为 Progressive Trust 埋数据) ---
     execution_log: list[dict[str, Any]] = []
-    
+
     # --- 成本追踪 ---
     total_tokens: int = 0
     total_cost_usd: float = 0.0
-    
+
     class Config:
         arbitrary_types_allowed = True
