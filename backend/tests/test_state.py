@@ -1,13 +1,11 @@
 """
-AgenticOS — State Schema 单元测试
+Usami — State Schema 单元测试
 重点: TaskPlan.get_ready_tasks() 逻辑
 """
 
 from __future__ import annotations
 
-import pytest
-from core.state import TaskPlan, Task, TaskStatus, TaskOutput, AgentState
-
+from core.state import AgentState, Task, TaskOutput, TaskPlan, TaskStatus
 
 # ============================================
 # get_ready_tasks()

@@ -1,14 +1,13 @@
 """
-AgenticOS — REST API 集成测试
+Usami — REST API 集成测试
 使用 httpx AsyncClient + mocked boss_graph
 """
 
 from __future__ import annotations
 
-import pytest
-import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 
 # ============================================
 # POST /api/v1/tasks
@@ -121,7 +120,7 @@ class TestHealth:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] in ("ok", "degraded")
-        assert data["service"] == "AgenticOS"
+        assert data["service"] == "Usami"
 
     @pytest.mark.asyncio
     async def test_health_includes_circuit_breaker(self, app_client):

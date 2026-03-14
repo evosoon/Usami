@@ -1,5 +1,5 @@
 """
-AgenticOS — Model Router
+Usami — Model Router
 按任务类型路由到不同模型，优化成本
 
 Pre-mortem F4 修正: 每次路由决策记录日志，为未来智能路由埋数据管道
@@ -8,13 +8,12 @@ HA 加固: 指数退避重试 + 断路器
 
 from __future__ import annotations
 
-import os
-import time
 import asyncio
-import structlog
-from typing import Any
+import time
 from dataclasses import dataclass
+from typing import Any
 
+import structlog
 from langchain_openai import ChatOpenAI
 
 logger = structlog.get_logger()
@@ -71,10 +70,9 @@ class CircuitBreaker:
 
     @property
     def state(self) -> str:
-        if self._state == self.OPEN:
-            if time.time() - self._last_failure_time >= self._recovery_timeout:
-                self._state = self.HALF_OPEN
-                self._half_open_calls = 0
+        if self._state == self.OPEN and time.time() - self._last_failure_time >= self._recovery_timeout:
+            self._state = self.HALF_OPEN
+            self._half_open_calls = 0
         return self._state
 
     def record_success(self) -> None:
@@ -167,12 +165,13 @@ class ModelRouter:
         "light": "light",
     }
 
-    def __init__(self, routing_config: dict[str, Any]):
+    def __init__(self, routing_config: dict[str, Any], litellm_url: str, litellm_master_key: str):
         self._rules = routing_config.get("routing_rules", {})
         self._budget = routing_config.get("budget", {})
         self._log_enabled = routing_config.get("logging", {}).get("enabled", True)
         self._routing_log: list[RoutingDecision] = []
-        self._litellm_url = os.getenv("LITELLM_PROXY_URL", "http://localhost:4000")
+        self._litellm_url = litellm_url
+        self._litellm_master_key = litellm_master_key
         # HA: 断路器
         self._circuit_breaker = CircuitBreaker(
             failure_threshold=5,
@@ -209,7 +208,7 @@ class ModelRouter:
         return ChatOpenAI(
             model=model_name,
             base_url=f"{self._litellm_url}/v1",
-            api_key=os.getenv("LITELLM_MASTER_KEY", "sk-agenticOS-dev"),
+            api_key=self._litellm_master_key,
             temperature=0.7,
         )
 

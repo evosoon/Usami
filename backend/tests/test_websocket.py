@@ -1,14 +1,15 @@
 """
-AgenticOS — WebSocket 单元测试
+Usami — WebSocket 单元测试
 测试 ConnectionManager + WebSocket 事件处理
 """
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
-from api.websocket import ConnectionManager
 
+import pytest
+
+from api.websocket import ConnectionManager
 
 # ============================================
 # ConnectionManager 测试

@@ -1,41 +1,41 @@
 # ================================================
-# Model Router 规则
-# task_type × complexity → model_tier
+# Model Router rules
+# task_type x complexity -> model_tier
 # ================================================
 
-# --- 路由规则 ---
+# --- Routing rules ---
 routing_rules:
   planning:
     model: "strong"
-    description: "任务分解、DAG 生成、意图理解"
-  
+    description: "Task decomposition, DAG generation, intent understanding"
+
   research:
     model: "medium"
-    description: "信息检索、资料整理"
-  
+    description: "Information retrieval, material organization"
+
   writing:
     model: "strong"
-    description: "报告撰写、内容生成"
-  
+    description: "Report writing, content generation"
+
   analysis:
     model: "strong"
-    description: "知识关联分析、洞察提炼"
-  
+    description: "Knowledge correlation analysis, insight extraction"
+
   summarize:
     model: "light"
-    description: "信息摘要、状态压缩"
-  
+    description: "Information summarization, state compression"
+
   classification:
     model: "light"
-    description: "意图分类、路由决策"
+    description: "Intent classification, routing decisions"
 
-# --- 成本预算 (每任务) ---
+# --- Cost budget (per task) ---
 budget:
   max_tokens_per_task: 100000
   max_cost_per_task_usd: 0.50
-  alert_threshold: 0.8  # 80% 时触发警告
+  alert_threshold: 0.8  # Trigger alert at 80%
 
-# --- 路由日志 (为未来智能路由埋数据管道) ---
+# --- Routing logs (data pipeline for future intelligent routing) ---
 logging:
   enabled: true
   fields:
@@ -46,4 +46,4 @@ logging:
     - latency_ms
     - cost_usd
     - success
-    - user_satisfaction  # 未来: 用户反馈
+    - user_satisfaction  # Future: user feedback

@@ -1,28 +1,36 @@
 """
-AgenticOS — Boss Prompt Templates
-集中管理 Boss Persona 的 Prompt 模板
+Usami — Prompt Templates & Message Constants
+Centralized prompt templates for Boss orchestration and task execution.
 """
 
 from __future__ import annotations
 
-BOSS_PLANNING_PROMPT = """你是 AgenticOS 的任务编排者 (Boss)。
+# ============================================
+# Boss Planning Prompts
+# ============================================
 
-用户意图: {user_intent}
+PLANNING_SYSTEM_MESSAGE = (
+    "You are a precise task planner. Always output valid JSON."
+)
 
-可用的 Persona:
+BOSS_PLANNING_PROMPT = """You are the task orchestrator (Boss) of Usami.
+
+User intent: {user_intent}
+
+Available Personas:
 {persona_list}
 
-请将用户意图分解为可执行的子任务。输出严格的 JSON 格式:
+Decompose the user intent into executable sub-tasks. Output strict JSON format:
 
 ```json
 {{
   "plan_id": "plan_<uuid>",
-  "user_intent": "<用户原始意图>",
+  "user_intent": "<original user intent>",
   "tasks": [
     {{
       "task_id": "t1",
-      "title": "<任务标题>",
-      "description": "<具体要做什么>",
+      "title": "<task title>",
+      "description": "<what to do specifically>",
       "assigned_persona": "<persona name>",
       "task_type": "<planning|research|writing|analysis|summarize>",
       "dependencies": [],
@@ -32,25 +40,75 @@ BOSS_PLANNING_PROMPT = """你是 AgenticOS 的任务编排者 (Boss)。
 }}
 ```
 
-规则:
-1. 每个任务必须分配给一个可用的 Persona
-2. dependencies 列出该任务依赖的其他 task_id
-3. 确保依赖关系构成有向无环图 (DAG)
-4. task_type 必须是以下之一: planning, research, writing, analysis, summarize
-5. 如果你不确定用户意图，在 tasks 中添加一个 task_type 为 "clarification" 的任务
+Rules:
+1. Each task must be assigned to an available Persona
+2. dependencies lists the task_ids this task depends on
+3. Ensure dependencies form a Directed Acyclic Graph (DAG)
+4. task_type must be one of: planning, research, writing, analysis, summarize
+5. If you are unsure about the user intent, add a task with task_type "clarification"
 """
 
-BOSS_AGGREGATION_PROMPT = """你是 AgenticOS 的任务编排者 (Boss)。
 
-所有子任务已完成，请汇总以下结果，生成最终交付物。
+# ============================================
+# Boss Aggregation Prompts
+# ============================================
 
-用户原始意图: {user_intent}
+AGGREGATION_SYSTEM_MESSAGE = (
+    "You are a professional content synthesizer. "
+    "Output a well-structured final report."
+)
 
-各任务结果摘要:
+BOSS_AGGREGATION_PROMPT = """You are the task orchestrator (Boss) of Usami.
+
+All sub-tasks are complete. Synthesize the following results into a final deliverable.
+
+Original user intent: {user_intent}
+
+Task result summaries:
 {task_summaries}
 
-请生成:
-1. 最终报告/回答（直接交付给用户的内容）
-2. 关键发现摘要
-3. 如果有信息不确定或冲突的地方，明确标注
+Please generate:
+1. Final report/answer (content delivered directly to the user)
+2. Key findings summary
+3. If any information is uncertain or conflicting, mark it clearly
 """
+
+
+# ============================================
+# Task Execution Templates
+# ============================================
+
+# Persona list line used in planning prompt
+PERSONA_LIST_LINE = "- {name}: {description} (tools: {tools})"
+
+# Upstream per-persona result block (envelope pattern)
+UPSTREAM_RESULT_BLOCK = "\n--- Result from {persona} ---\n{summary}\n"
+
+# Upstream context section header
+UPSTREAM_CONTEXT_HEADER = "Upstream task results:{upstream_context}"
+
+# HumanMessage template for persona task execution
+TASK_EXECUTION_TEMPLATE = """Task: {title}
+Description: {description}
+
+{upstream_section}
+
+Please execute this task and output the result."""
+
+# Fallback task title when plan parsing fails
+FALLBACK_TASK_TITLE = "Direct answer"
+
+# Final aggregation summary
+FINAL_REPORT_SUMMARY = "Final report generated"
+
+# Error summary for failed task execution
+TASK_EXECUTION_FAILED_SUMMARY = "Execution failed: {error}"
+
+
+# ============================================
+# User-facing HiTL Strings (Chinese per language rules)
+# ============================================
+
+HITL_PLAN_VALIDATION_TITLE = "任务计划验证失败"
+HITL_PLAN_VALIDATION_DESC = "Boss 生成的计划存在问题: {errors}"
+HITL_PLAN_VALIDATION_OPTIONS = ["让 Boss 重新规划", "手动修改", "取消"]

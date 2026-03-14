@@ -1,15 +1,15 @@
 """
-AgenticOS — ModelRouter + CircuitBreaker 单元测试
+Usami — ModelRouter + CircuitBreaker 单元测试
 """
 
 from __future__ import annotations
 
 import time
+from unittest.mock import AsyncMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
-from core.model_router import ModelRouter, CircuitBreaker, _retry_with_backoff
-
+from core.model_router import CircuitBreaker, ModelRouter, _retry_with_backoff
 
 # ============================================
 # CircuitBreaker 状态转换
@@ -148,7 +148,7 @@ class TestModelRouter:
             "budget": {"max_cost_per_task_usd": 0.50},
             "logging": {"enabled": True},
         }
-        return ModelRouter(config)
+        return ModelRouter(config, litellm_url="http://localhost:4000", litellm_master_key="sk-test")
 
     def test_planning_routes_to_strong(self):
         router = self._make_router()

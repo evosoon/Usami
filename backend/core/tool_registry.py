@@ -1,5 +1,5 @@
 """
-AgenticOS — Tool Registry (多源加载)
+Usami — Tool Registry (多源加载)
 Pre-mortem F5 修正: 扩展性评估中的关键升级
 
 设计原则:
@@ -11,13 +11,26 @@ Pre-mortem F5 修正: 扩展性评估中的关键升级
 
 from __future__ import annotations
 
-import structlog
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Any
 
+import structlog
 from langchain_core.tools import BaseTool, tool
 
 logger = structlog.get_logger()
+
+# Module-level config — set once at startup via init_tool_config().
+_searxng_url: str = ""
+_litellm_url: str = ""
+_litellm_master_key: str = ""
+
+
+def init_tool_config(config) -> None:
+    """Initialize builtin tool config from AppConfig. Called once at startup."""
+    global _searxng_url, _litellm_url, _litellm_master_key
+    _searxng_url = config.searxng_url
+    _litellm_url = config.litellm_url
+    _litellm_master_key = config.litellm_master_key
 
 
 # ============================================
@@ -32,8 +45,8 @@ class ToolSpec:
     permission_level: int = 1        # L1-L4
     requires_approval: bool = False  # 是否需要 HiTL 审批
     source: str = "builtin"          # builtin | mcp | skill
-    scope: Optional[str] = None      # None=全局, "researcher"=仅该 Persona
-    handler: Optional[BaseTool] = None
+    scope: str | None = None      # None=全局, "researcher"=仅该 Persona
+    handler: BaseTool | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -49,9 +62,8 @@ def web_search(query: str) -> str:
 
     async def _search() -> str:
         import httpx
-        import os
 
-        searxng_url = os.getenv("SEARXNG_URL", "http://searxng:8080")
+        searxng_url = _searxng_url
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -88,12 +100,12 @@ def web_search(query: str) -> str:
             return f"[web_search] 搜索服务异常 (HTTP {e.response.status_code})"
         except Exception as e:
             logger.error("web_search_error", query=query, error=str(e))
-            return f"[web_search] 搜索失败: {str(e)}"
+            return f"[web_search] 搜索失败: {e!s}"
 
     try:
         # Handle running inside async context (LangGraph)
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 future = pool.submit(asyncio.run, _search())
                 return future.result(timeout=35.0)
@@ -102,7 +114,7 @@ def web_search(query: str) -> str:
             return asyncio.run(_search())
     except Exception as e:
         logger.error("web_search_execution_error", error=str(e))
-        return f"[web_search] 执行失败: {str(e)}"
+        return f"[web_search] 执行失败: {e!s}"
 
 
 @tool
@@ -113,14 +125,13 @@ def knowledge_search(query: str) -> str:
 
     async def _search() -> str:
         import httpx
-        import os
 
-        litellm_url = os.getenv("LITELLM_PROXY_URL", "http://litellm:4000")
+        litellm_url = _litellm_url
         top_k = 5
 
         try:
             # Step 1: Get embedding for query via LiteLLM
-            litellm_key = os.getenv("LITELLM_MASTER_KEY", "sk-agenticOS-dev")
+            litellm_key = _litellm_master_key
             async with httpx.AsyncClient(timeout=30.0) as client:
                 embed_response = await client.post(
                     f"{litellm_url}/v1/embeddings",
@@ -135,8 +146,9 @@ def knowledge_search(query: str) -> str:
                 query_embedding = embed_data["data"][0]["embedding"]
 
             # Step 2: Vector similarity search via pgvector
-            from core.memory import get_session
             from sqlalchemy import text
+
+            from core.memory import get_session
 
             async with get_session() as session:
                 stmt = text("""
@@ -174,11 +186,11 @@ def knowledge_search(query: str) -> str:
             return "[knowledge_search] 向量化服务异常，无法检索知识库"
         except Exception as e:
             logger.error("knowledge_search_error", query=query, error=str(e))
-            return f"[knowledge_search] 检索失败: {str(e)}"
+            return f"[knowledge_search] 检索失败: {e!s}"
 
     try:
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 future = pool.submit(asyncio.run, _search())
                 return future.result(timeout=35.0)
@@ -186,14 +198,14 @@ def knowledge_search(query: str) -> str:
             return asyncio.run(_search())
     except Exception as e:
         logger.error("knowledge_search_execution_error", error=str(e))
-        return f"[knowledge_search] 执行失败: {str(e)}"
+        return f"[knowledge_search] 执行失败: {e!s}"
 
 
 @tool
 def file_write(filename: str, content: str) -> str:
     """写入文件（限制 Markdown/JSON/YAML/TXT/CSV）"""
-    from pathlib import Path
     import re
+    from pathlib import Path
 
     # Security: Validate filename - only allow safe characters
     if not re.match(r'^[\w\-./]+$', filename):
@@ -236,7 +248,7 @@ def file_write(filename: str, content: str) -> str:
         return "[file_write] 权限不足，无法写入文件"
     except Exception as e:
         logger.error("file_write_error", filename=filename, error=str(e))
-        return f"[file_write] 写入失败: {str(e)}"
+        return f"[file_write] 写入失败: {e!s}"
 
 
 BUILTIN_TOOL_MAP: dict[str, BaseTool] = {
@@ -253,7 +265,7 @@ BUILTIN_TOOL_MAP: dict[str, BaseTool] = {
 class ToolRegistry:
     """
     统一工具注册中心
-    
+
     支持三种来源:
     1. 内置工具 (builtin) — 代码定义
     2. MCP 工具 (mcp) — 运行时动态发现
@@ -270,7 +282,7 @@ class ToolRegistry:
             if handler is None:
                 logger.warning("builtin_tool_not_found", name=name)
                 continue
-            
+
             spec = ToolSpec(
                 name=name,
                 description=config.get("description", ""),
@@ -286,10 +298,10 @@ class ToolRegistry:
         """从 MCP Server 动态加载工具"""
         if not mcp_config:
             return
-        
+
         try:
             from langchain_mcp_adapters.client import MultiServerMCPClient
-            
+
             async with MultiServerMCPClient(mcp_config) as client:
                 tools = client.get_tools()
                 for t in tools:
@@ -339,7 +351,7 @@ class ToolRegistry:
                 continue
             if spec.handler:
                 result.append(spec.handler)
-        
+
         return result
 
     def list_tools(self) -> list[ToolSpec]:

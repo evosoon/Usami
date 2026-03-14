@@ -1,4 +1,4 @@
-# AgenticOS — Architecture Overview
+# Usami — Architecture Overview
 
 ## System Architecture
 

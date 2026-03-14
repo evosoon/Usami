@@ -10,7 +10,11 @@ Personal AI Operating System — multi-agent orchestration for technical researc
 
 ## Code style
 
-- Language: Python code and comments in English. User-facing strings (prompts, error messages) in Chinese.
+- Language rules (follow strictly):
+  - **English**: Python code, comments, variable/function names, log event names, LLM prompt templates, CLAUDE.md files, skill files, YAML config keys, commit messages
+  - **Chinese**: Error messages shown to end users, UI text
+  - When unsure, default to English
+- **Prompt centralization**: All LLM prompt templates live in `backend/agents/prompts.py`. No inline prompt strings in agent code. See `backend/CLAUDE.md` "Prompt conventions" for details.
 - Logging: `structlog` only. Every log call uses keyword args: `logger.info("event_name", key=value)`.
 - Models: Pydantic BaseModel for all data schemas. Define in `core/state.py`.
 - Async: All I/O is async. Use `async def` + `await`. No blocking calls in async context.
@@ -20,23 +24,39 @@ Personal AI Operating System — multi-agent orchestration for technical researc
 
 ## Commands
 
+This project uses `just` as its command runner and `uv` for Python deps. Run `just --list` to see all commands.
+
+**Do NOT use bare `python` or `python3`** — always use `uv run`.
+
 ```bash
-# Start all services (Docker)
-docker compose up -d
+# First-time setup
+just init                       # create .env from template
+# Edit .env — fill in your API keys
 
-# Run backend locally (from backend/)
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+# Docker (full stack)
+just up                         # start all services
+just down                       # stop all services
+just rebuild                    # rebuild images + restart
+just logs                       # tail all logs
+just logs backend               # tail one service
 
-# Tests
-python -m pytest tests/ -v
-python -m pytest tests/ -v --cov=core --cov=api --cov-report=term-missing
+# Backend
+just test                       # run tests
+just test -k test_hitl          # filtered
+just test-cov                   # with coverage
+just lint                       # check (ruff)
+just lint-fix                   # auto-fix
 
-# Database migration
-alembic upgrade head                          # apply
-alembic revision --autogenerate -m "msg"      # create new
+# Database
+just migrate                    # apply pending migrations
+just migration "add table"      # create new migration
 
-# Health check
-curl http://localhost:8000/health
+# Frontend
+just dev-frontend               # local dev server
+
+# Utilities
+just health                     # backend health check
+just env-check                  # audit .env vs .env.example
 ```
 
 ## Project layout
@@ -51,7 +71,7 @@ backend/         Python backend (FastAPI + LangGraph). See backend/CLAUDE.md
   alembic/       DB migrations
   tests/         pytest suite
 docs/            Human documentation (architecture, design decisions)
-docker-compose.yml   5 services: backend, frontend, postgres, redis, litellm
+docker-compose.yml   6 services: backend, frontend, postgres, redis, litellm, searxng
 ```
 
 ## Do NOT

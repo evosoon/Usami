@@ -79,7 +79,7 @@ docker compose up -d
 
 # 4. Verify
 curl http://localhost:8000/health
-# → {"service": "AgenticOS", "status": "ok", "litellm": "ok", "circuit_breaker": "closed"}
+# → {"service": "Usami", "status": "ok", "litellm": "ok", "circuit_breaker": "closed"}
 ```
 
 **Service endpoints:**

@@ -1,5 +1,5 @@
 """
-AgenticOS — Memory Store
+Usami — Memory Store
 数据库初始化 + 持久化抽象
 
 MVP 阶段:
@@ -9,12 +9,11 @@ MVP 阶段:
 
 from __future__ import annotations
 
-import os
 import structlog
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import Column, String, Text, Float, DateTime, JSON, func
 from pgvector.sqlalchemy import Vector
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, String, Text, func
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase
 
 logger = structlog.get_logger()
 
@@ -89,6 +88,20 @@ class Document(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+class User(Base):
+    """User accounts for authentication"""
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True)
+    email = Column(String, unique=True, nullable=False, index=True)
+    display_name = Column(String, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    role = Column(String, default="user")
+    is_active = Column(Boolean, default=True, server_default="true")
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 # ============================================
 # Database Initialization
 # ============================================
@@ -109,7 +122,9 @@ async def init_database(database_url: str) -> None:
 
     # 使用 Alembic 管理 schema（同步 psycopg 驱动）
     from pathlib import Path
+
     from alembic.config import Config
+
     from alembic import command
 
     alembic_ini = Path(__file__).parent.parent / "alembic.ini"

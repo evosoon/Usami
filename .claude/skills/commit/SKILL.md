@@ -1,59 +1,60 @@
 ---
 name: commit
-description: 自动化 git 提交流程：检查状态、运行测试、add、commit、push
+description: Automated git commit flow — status check, test, add, commit, push
 allowed-tools: Bash, Read, Grep
 ---
 
-# Git 提交流程
+# Git Commit Flow
 
-执行以下步骤完成代码提交：
+Execute the following steps to complete a code commit:
 
-## 1. 检查 Git 状态
-- 运行 `git status` 查看变更文件
-- 运行 `git diff --stat` 查看变更摘要
-- 运行 `git log --oneline -3` 查看最近提交风格
+## 1. Check Git Status
+- Run `git status` to see changed files
+- Run `git diff --stat` to see change summary
+- Run `git log --oneline -3` to match recent commit style
 
-## 2. 运行测试
-如果项目中存在测试，先运行测试确保代码质量：
-- Python 项目: `python -m pytest tests/ -v --tb=short`
-- 如果测试失败，停止提交并报告错误
+## 2. Run Tests
+Run tests before committing to ensure code quality:
+- This project uses `uv` for dependency management. Always run via: `uv run python -m pytest backend/tests/ -v --tb=short`
+- **Never** use bare `python` or `python3` — system Python lacks project deps
+- If tests fail, stop the commit and report errors
 
-## 3. 暂存文件
-使用 `git add` 暂存相关文件，排除以下内容：
+## 3. Stage Files
+Use `git add` to stage relevant files, excluding:
 - `outputs/`, `__pycache__/`, `.env`, `*.log`, `node_modules/`
-- 不要提交敏感信息（API keys, credentials 等）
+- Never commit sensitive data (API keys, credentials, etc.)
 
-## 4. 生成 Commit Message
-根据变更内容生成符合规范的 commit message：
-- `feat:` 新功能
-- `fix:` 修复 bug
-- `docs:` 文档更新
-- `refactor:` 重构
-- `test:` 测试
-- `chore:` 杂项
+## 4. Generate Commit Message
+Generate a conventional commit message based on the changes:
+- `feat:` new feature
+- `fix:` bug fix
+- `docs:` documentation update
+- `refactor:` code refactoring
+- `test:` test changes
+- `chore:` maintenance
 
-Commit message 格式：
+Commit message format:
 ```
-<type>: <简短描述>
+<type>: <short description>
 
-<详细说明（如有多个变更）>
+<detailed explanation (if multiple changes)>
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 
 Co-Authored-By: Claude <noreply@anthropic.com>
 ```
 
-## 5. 提交并推送
-- 执行 `git commit -m "<message>"`
-- 执行 `git push origin <current-branch>`
+## 5. Commit and Push
+- Run `git commit -m "<message>"`
+- Run `git push origin <current-branch>`
 
-## 6. 输出结果
-- 显示 commit hash
-- 显示推送状态
+## 6. Output
+- Show commit hash
+- Show push status
 
-## 参数
-如果用户提供了 `$ARGUMENTS`，将其作为 commit message 的描述参考。
+## Arguments
+If the user provides `$ARGUMENTS`, use them as reference for the commit message description.
 
-示例：
-- `/commit` - 自动分析变更并生成 message
-- `/commit 添加用户认证功能` - 使用指定描述
+Examples:
+- `/commit` — auto-analyze changes and generate message
+- `/commit add user authentication` — use the provided description

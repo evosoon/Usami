@@ -1,15 +1,18 @@
 """
-AgenticOS — REST API Routes
+Usami — REST API Routes
 """
 
 from __future__ import annotations
 
-import uuid
 import asyncio
+import uuid
 
 import structlog
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+
+from core.auth import get_current_user
+from core.state import UserProfile
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -45,7 +48,7 @@ class HiTLResolveRequest(BaseModel):
 # ============================================
 
 @router.post("/tasks", response_model=TaskResponse)
-async def create_task(req: TaskRequest, request: Request):
+async def create_task(req: TaskRequest, request: Request, _user: UserProfile = Depends(get_current_user)):
     """
     创建新任务
     用户意图 → Boss 分解 → Persona 执行 → 交付结果
@@ -92,7 +95,7 @@ async def create_task(req: TaskRequest, request: Request):
 
 
 @router.get("/tasks/{thread_id}")
-async def get_task_status(thread_id: str, request: Request):
+async def get_task_status(thread_id: str, request: Request, _user: UserProfile = Depends(get_current_user)):
     """获取任务执行状态 — 优先 Checkpoint，fallback 内存追踪"""
     boss_graph = request.app.state.boss_graph
 
@@ -169,6 +172,7 @@ async def resolve_hitl(
     thread_id: str,
     req: HiTLResolveRequest,
     request: Request,
+    _user: UserProfile = Depends(get_current_user),
 ):
     """用户回应 HiTL 请求 — 记录决定 + 恢复 Graph 执行"""
     hitl_gateway = request.app.state.hitl_gateway
@@ -220,18 +224,18 @@ async def resolve_hitl(
 
         return {"status": "resumed", "request_id": req.request_id}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/personas")
-async def list_personas(request: Request):
+async def list_personas(request: Request, _user: UserProfile = Depends(get_current_user)):
     """列出所有可用的 Persona"""
     factory = request.app.state.persona_factory
     return factory.list_personas()
 
 
 @router.get("/tools")
-async def list_tools(request: Request):
+async def list_tools(request: Request, _user: UserProfile = Depends(get_current_user)):
     """列出所有已注册工具"""
     registry = request.app.state.tool_registry
     return [
@@ -246,7 +250,7 @@ async def list_tools(request: Request):
 
 
 @router.get("/scheduler/jobs")
-async def list_scheduler_jobs(request: Request):
+async def list_scheduler_jobs(request: Request, _user: UserProfile = Depends(get_current_user)):
     """列出所有定时任务"""
     scheduler = request.app.state.scheduler
     jobs = scheduler.get_jobs()

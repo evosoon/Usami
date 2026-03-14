@@ -1,14 +1,18 @@
 """
-AgenticOS — WebSocket Handler
+Usami — WebSocket Handler
 实时通信: Agent 执行状态推送 + HiTL 交互
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from core.auth import decode_token
 
 logger = structlog.get_logger()
 
@@ -39,10 +43,8 @@ class ConnectionManager:
     async def broadcast(self, event: dict):
         """广播事件给所有连接"""
         for ws in self.active_connections.values():
-            try:
+            with contextlib.suppress(Exception):
                 await ws.send_json(event)
-            except Exception:
-                pass
 
 
 @router.websocket("/{client_id}")
@@ -60,6 +62,21 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
     - task.cancel: 取消任务
     """
     manager = websocket.app.state.ws_manager
+
+    # Validate JWT token from query params
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4001, reason="Missing authentication token")
+        return
+    try:
+        payload = decode_token(token)
+        if payload.get("type") != "access":
+            await websocket.close(code=4001, reason="Invalid token type")
+            return
+    except Exception:
+        await websocket.close(code=4001, reason="Invalid or expired token")
+        return
+
     await manager.connect(websocket, client_id)
 
     try:
@@ -96,13 +113,13 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                         "current_phase": "executing",
                     })
 
-                    async def _resume():
+                    async def _resume(graph=boss_graph, cfg=config):
                         try:
-                            await boss_graph.ainvoke(None, config=config)
+                            await graph.ainvoke(None, config=cfg)
                         except Exception as e:
                             logger.error("ws_hitl_resume_failed", error=str(e))
 
-                    asyncio.create_task(_resume())
+                    _task = asyncio.create_task(_resume())  # noqa: RUF006
 
             elif event_type == "task.cancel":
                 thread_id = event.get("thread_id")

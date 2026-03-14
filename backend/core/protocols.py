@@ -1,8 +1,8 @@
 """
-AgenticOS — Runtime Protocol (薄抽象层)
+Usami — Runtime Protocol (薄抽象层)
 Pre-mortem F1 修正: 依赖抽象，不依赖 LangGraph 实现
 
-这一层定义了 AgenticOS 核心运行时的接口契约。
+这一层定义了 Usami 核心运行时的接口契约。
 当前唯一实现是 LangGraph，但未来可替换为任何
 符合协议的 Runtime（OpenAI Agents SDK、自建等）。
 
@@ -12,10 +12,10 @@ Pre-mortem F1 修正: 依赖抽象，不依赖 LangGraph 实现
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from core.state import AgentState, TaskPlan
-
 
 # ============================================
 # Agent Runtime Protocol
@@ -33,7 +33,7 @@ class AgentRuntimeProtocol(ABC):
         """
         执行完整的任务链路:
         用户意图 → Boss 分解 → Persona 执行 → 汇总交付
-        
+
         Returns: 最终的 AgentState
         """
         ...
@@ -47,7 +47,7 @@ class AgentRuntimeProtocol(ABC):
         """
         流式执行，实时推送中间状态
         用于 WebSocket 实时通信
-        
+
         Yields: 每一步的状态更新事件
         """
         ...
@@ -60,7 +60,7 @@ class AgentRuntimeProtocol(ABC):
     ) -> AgentState:
         """
         HiTL 恢复: 人类做出决定后，从中断点继续执行
-        
+
         Args:
             thread_id: 任务线程 ID
             hitl_response: 人类的决定
