@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # === Backend API ===
   backend:
@@ -18,7 +16,8 @@ services:
     volumes:
       - ./backend:/app
       - ./config:/app/config
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+      - backend_venv:/app/.venv
+    command: sh -c "uv sync --frozen --no-dev && uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
 
   # === Frontend ===
   # frontend:
@@ -97,3 +96,4 @@ services:
 volumes:
   pgdata:
   redisdata:
+  backend_venv:

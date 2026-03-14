@@ -5,8 +5,14 @@ WORKDIR /app
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Copy dependency files first (cache-friendly layer)
+COPY pyproject.toml uv.lock .python-version ./
+
+# Install dependencies (frozen = use exact lockfile versions)
+RUN uv sync --frozen --no-dev --no-install-project
 
 COPY . .
 
@@ -20,4 +26,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()" || exit 1
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
