@@ -148,7 +148,7 @@ class TestModelRouter:
             "budget": {"max_cost_per_task_usd": 0.50},
             "logging": {"enabled": True},
         }
-        return ModelRouter(config)
+        return ModelRouter(config, litellm_url="http://localhost:4000", litellm_master_key="sk-test")
 
     def test_planning_routes_to_strong(self):
         router = self._make_router()

@@ -2,8 +2,8 @@ FROM python:3.12.2-slim
 
 WORKDIR /app
 
-# Create non-root user
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+# Create non-root user with home directory for uv cache
+RUN groupadd -r appuser && useradd -r -g appuser -m appuser
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/

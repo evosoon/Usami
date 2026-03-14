@@ -33,7 +33,7 @@ class EventBus:
             "type": event_type,
             "payload": payload,
         })
-        await self._redis.publish(f"agenticOS:events:{event_type}", message)
+        await self._redis.publish(f"usami:events:{event_type}", message)
         logger.info("event_published", type=event_type)
 
     def subscribe(self, event_type: str, handler: Callable[..., Awaitable]) -> None:
@@ -48,7 +48,7 @@ class EventBus:
         pubsub = self._redis.pubsub()
 
         for event_type in self._handlers:
-            await pubsub.subscribe(f"agenticOS:events:{event_type}")
+            await pubsub.subscribe(f"usami:events:{event_type}")
 
         logger.info("event_bus_listening", channels=list(self._handlers.keys()))
 

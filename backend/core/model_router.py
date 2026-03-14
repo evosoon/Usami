@@ -9,7 +9,6 @@ HA 加固: 指数退避重试 + 断路器
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -166,12 +165,13 @@ class ModelRouter:
         "light": "light",
     }
 
-    def __init__(self, routing_config: dict[str, Any]):
+    def __init__(self, routing_config: dict[str, Any], litellm_url: str, litellm_master_key: str):
         self._rules = routing_config.get("routing_rules", {})
         self._budget = routing_config.get("budget", {})
         self._log_enabled = routing_config.get("logging", {}).get("enabled", True)
         self._routing_log: list[RoutingDecision] = []
-        self._litellm_url = os.getenv("LITELLM_PROXY_URL", "http://localhost:4000")
+        self._litellm_url = litellm_url
+        self._litellm_master_key = litellm_master_key
         # HA: 断路器
         self._circuit_breaker = CircuitBreaker(
             failure_threshold=5,
@@ -208,7 +208,7 @@ class ModelRouter:
         return ChatOpenAI(
             model=model_name,
             base_url=f"{self._litellm_url}/v1",
-            api_key=os.getenv("LITELLM_MASTER_KEY", "sk-agenticOS-dev"),
+            api_key=self._litellm_master_key,
             temperature=0.7,
         )
 

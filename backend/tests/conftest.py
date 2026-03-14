@@ -15,6 +15,8 @@ from core.state import (
     Task,
     TaskOutput,
     TaskPlan,
+    UserProfile,
+    UserRole,
 )
 
 # ============================================
@@ -102,6 +104,16 @@ async def app_client():
 
     # 延迟导入避免启动副作用
     from main import app
+
+    # Override auth dependency so existing tests don't need tokens
+    from core.auth import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: UserProfile(
+        id="test_user",
+        email="test@test.com",
+        display_name="Test User",
+        role=UserRole.ADMIN,
+        is_active=True,
+    )
 
     # Mock boss_graph
     mock_graph = AsyncMock()

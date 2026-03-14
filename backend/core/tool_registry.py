@@ -19,6 +19,19 @@ from langchain_core.tools import BaseTool, tool
 
 logger = structlog.get_logger()
 
+# Module-level config — set once at startup via init_tool_config().
+_searxng_url: str = ""
+_litellm_url: str = ""
+_litellm_master_key: str = ""
+
+
+def init_tool_config(config) -> None:
+    """Initialize builtin tool config from AppConfig. Called once at startup."""
+    global _searxng_url, _litellm_url, _litellm_master_key
+    _searxng_url = config.searxng_url
+    _litellm_url = config.litellm_url
+    _litellm_master_key = config.litellm_master_key
+
 
 # ============================================
 # Tool Spec
@@ -48,11 +61,9 @@ def web_search(query: str) -> str:
     import concurrent.futures
 
     async def _search() -> str:
-        import os
-
         import httpx
 
-        searxng_url = os.getenv("SEARXNG_URL", "http://searxng:8080")
+        searxng_url = _searxng_url
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -113,16 +124,14 @@ def knowledge_search(query: str) -> str:
     import concurrent.futures
 
     async def _search() -> str:
-        import os
-
         import httpx
 
-        litellm_url = os.getenv("LITELLM_PROXY_URL", "http://litellm:4000")
+        litellm_url = _litellm_url
         top_k = 5
 
         try:
             # Step 1: Get embedding for query via LiteLLM
-            litellm_key = os.getenv("LITELLM_MASTER_KEY", "sk-agenticOS-dev")
+            litellm_key = _litellm_master_key
             async with httpx.AsyncClient(timeout=30.0) as client:
                 embed_response = await client.post(
                     f"{litellm_url}/v1/embeddings",

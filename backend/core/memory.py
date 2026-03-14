@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import structlog
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, Column, DateTime, Float, String, Text, func
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, String, Text, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -84,6 +84,20 @@ class Document(Base):
     source = Column(String)  # URL, file path, etc.
     embedding = Column(Vector(1536))  # text-embedding-3-small dimension
     metadata_ = Column("metadata", JSON, default=dict)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class User(Base):
+    """User accounts for authentication"""
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True)
+    email = Column(String, unique=True, nullable=False, index=True)
+    display_name = Column(String, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    role = Column(String, default="user")
+    is_active = Column(Boolean, default=True, server_default="true")
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 

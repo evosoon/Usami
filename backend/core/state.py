@@ -142,3 +142,21 @@ class AgentState(BaseModel):
 
     class Config:
         arbitrary_types_allowed = True
+
+
+# ============================================
+# User & Auth Schema
+# ============================================
+
+class UserRole(StrEnum):
+    ADMIN = "admin"
+    USER = "user"
+
+
+class UserProfile(BaseModel):
+    """User profile returned by auth endpoints (no password)"""
+    id: str
+    email: str
+    display_name: str
+    role: UserRole
+    is_active: bool

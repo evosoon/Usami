@@ -34,10 +34,12 @@ class PersonaFactory:
         personas_config: dict[str, Any],
         tool_registry: ToolRegistry,
         model_router_config: dict[str, Any],
+        litellm_url: str,
+        litellm_master_key: str,
     ):
         self._configs = personas_config
         self._tool_registry = tool_registry
-        self._model_router = ModelRouter(model_router_config)
+        self._model_router = ModelRouter(model_router_config, litellm_url, litellm_master_key)
         self._personas: dict[str, Any] = {}
 
         # 预创建所有 Persona

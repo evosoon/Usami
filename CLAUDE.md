@@ -24,25 +24,39 @@ Personal AI Operating System — multi-agent orchestration for technical researc
 
 ## Commands
 
-This project uses `uv` for dependency management. **Always use `uv run` to execute Python commands** — do NOT use bare `python` or `python3` (system Python lacks project deps).
+This project uses `just` as its command runner and `uv` for Python deps. Run `just --list` to see all commands.
+
+**Do NOT use bare `python` or `python3`** — always use `uv run`.
 
 ```bash
-# Start all services (Docker)
-docker compose up -d
+# First-time setup
+just init                       # create .env from template
+# Edit .env — fill in your API keys
 
-# Run backend locally (from backend/)
-uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+# Docker (full stack)
+just up                         # start all services
+just down                       # stop all services
+just rebuild                    # rebuild images + restart
+just logs                       # tail all logs
+just logs backend               # tail one service
 
-# Tests (MUST use uv run)
-uv run python -m pytest backend/tests/ -v --tb=short
-uv run python -m pytest backend/tests/ -v --cov=core --cov=api --cov-report=term-missing
+# Backend
+just test                       # run tests
+just test -k test_hitl          # filtered
+just test-cov                   # with coverage
+just lint                       # check (ruff)
+just lint-fix                   # auto-fix
 
-# Database migration
-uv run alembic upgrade head                          # apply
-uv run alembic revision --autogenerate -m "msg"      # create new
+# Database
+just migrate                    # apply pending migrations
+just migration "add table"      # create new migration
 
-# Health check
-curl http://localhost:8000/health
+# Frontend
+just dev-frontend               # local dev server
+
+# Utilities
+just health                     # backend health check
+just env-check                  # audit .env vs .env.example
 ```
 
 ## Project layout
@@ -57,7 +71,7 @@ backend/         Python backend (FastAPI + LangGraph). See backend/CLAUDE.md
   alembic/       DB migrations
   tests/         pytest suite
 docs/            Human documentation (architecture, design decisions)
-docker-compose.yml   5 services: backend, frontend, postgres, redis, litellm
+docker-compose.yml   6 services: backend, frontend, postgres, redis, litellm, searxng
 ```
 
 ## Do NOT

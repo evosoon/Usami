@@ -55,11 +55,15 @@ class TestWebSearch:
         assert "未找到" in result
 
     def test_web_search_timeout(self):
-        """测试 web_search 超时处理 (环境变量指向不存在的服务)"""
-        import os
-        # Point to non-existent service to trigger connection error
-        with patch.dict(os.environ, {"SEARXNG_URL": "http://nonexistent-host:9999"}):
+        """测试 web_search 超时处理 (配置指向不存在的服务)"""
+        import core.tool_registry as _tr
+
+        old = _tr._searxng_url
+        _tr._searxng_url = "http://nonexistent-host:9999"
+        try:
             result = web_search.invoke({"query": "test"})
+        finally:
+            _tr._searxng_url = old
 
         assert result is not None
         assert "[web_search]" in result
@@ -68,11 +72,14 @@ class TestWebSearch:
 
     def test_web_search_http_error(self):
         """测试 web_search HTTP 错误处理"""
-        # This test is simplified - we just verify the tool handles errors gracefully
-        # Full HTTP error mocking is complex due to the async wrapper pattern
-        import os
-        with patch.dict(os.environ, {"SEARXNG_URL": "http://127.0.0.1:1"}):
+        import core.tool_registry as _tr
+
+        old = _tr._searxng_url
+        _tr._searxng_url = "http://127.0.0.1:1"
+        try:
             result = web_search.invoke({"query": "test"})
+        finally:
+            _tr._searxng_url = old
 
         assert result is not None
         assert "[web_search]" in result

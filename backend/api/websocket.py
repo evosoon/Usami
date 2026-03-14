@@ -12,6 +12,8 @@ import json
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from core.auth import decode_token
+
 logger = structlog.get_logger()
 
 router = APIRouter()
@@ -60,6 +62,21 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
     - task.cancel: 取消任务
     """
     manager = websocket.app.state.ws_manager
+
+    # Validate JWT token from query params
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4001, reason="Missing authentication token")
+        return
+    try:
+        payload = decode_token(token)
+        if payload.get("type") != "access":
+            await websocket.close(code=4001, reason="Invalid token type")
+            return
+    except Exception:
+        await websocket.close(code=4001, reason="Invalid or expired token")
+        return
+
     await manager.connect(websocket, client_id)
 
     try:

@@ -78,9 +78,12 @@ def test_load_config_with_defaults():
         config = load_config()
 
     assert isinstance(config, AppConfig)
-    assert config.database_url == "postgresql://agenticOS:agenticOS@localhost:5432/agenticOS"
-    assert config.redis_url == "redis://localhost:6379/0"
-    assert config.litellm_url == "http://localhost:4000"
+    # DATABASE_URL comes from .env.example (loaded by load_dotenv at import time)
+    assert "usami" in config.database_url
+    assert config.litellm_master_key != ""
+    assert config.jwt_secret != ""
+    assert config.access_token_expire_minutes == 15
+    assert config.refresh_token_expire_days == 7
     assert "researcher" in config.personas
     assert "web_search" in config.tools
 
@@ -141,10 +144,18 @@ def test_app_config_default_values():
     assert config.database_url == ""
     assert config.redis_url == ""
     assert config.litellm_url == ""
+    assert config.litellm_master_key == ""
+    assert config.searxng_url == ""
+    assert config.jwt_secret == ""
+    assert config.access_token_expire_minutes == 15
+    assert config.refresh_token_expire_days == 7
+    assert config.admin_email == ""
+    assert config.admin_password == ""
     assert config.personas == {}
     assert config.tools == {}
     assert config.mcp_servers == {}
     assert config.routing == {}
+    assert config.scheduler == {}
 
 
 def test_app_config_custom_values():

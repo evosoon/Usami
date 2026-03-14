@@ -38,6 +38,6 @@ mcp_servers: {}
 # --- Sandbox (disabled for MVP) ---
 sandbox:
   enabled: false
-  # image: "agenticOS-sandbox:latest"
+  # image: "usami-sandbox:latest"
   # memory_limit: "512m"
   # timeout: 30

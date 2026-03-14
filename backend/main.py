@@ -16,14 +16,17 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from agents.boss import build_boss_graph
+from api.admin_routes import router as admin_router
+from api.auth_routes import router as auth_router
 from api.routes import router as api_router
 from api.websocket import ConnectionManager
 from api.websocket import router as ws_router
+from core.auth import init_auth, seed_admin_user
 from core.config import load_config
 from core.hitl import HiTLGateway
 from core.memory import init_database
 from core.persona_factory import PersonaFactory
-from core.tool_registry import ToolRegistry
+from core.tool_registry import ToolRegistry, init_tool_config
 from scheduler.cron import init_scheduler
 
 logger = structlog.get_logger()
@@ -38,6 +41,12 @@ async def lifespan(app: FastAPI):
 
     # 初始化数据库
     await init_database(config.database_url)
+
+    # 初始化 Auth 模块
+    init_auth(config)
+
+    # Seed admin user
+    await seed_admin_user()
 
     # 初始化 Redis (非致命)
     redis_client = None
@@ -57,6 +66,7 @@ async def lifespan(app: FastAPI):
         redis_client = None
 
     # 初始化 Tool Registry（多源加载）
+    init_tool_config(config)
     tool_registry = ToolRegistry()
     tool_registry.load_builtin_tools(config.tools)
     if config.mcp_servers:
@@ -68,6 +78,8 @@ async def lifespan(app: FastAPI):
         personas_config=config.personas,
         tool_registry=tool_registry,
         model_router_config=config.routing,
+        litellm_url=config.litellm_url,
+        litellm_master_key=config.litellm_master_key,
     )
     app.state.persona_factory = persona_factory
 
@@ -150,6 +162,8 @@ app.add_middleware(
 )
 
 # Routes
+app.include_router(auth_router, prefix="/api/v1")
+app.include_router(admin_router, prefix="/api/v1")
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(ws_router, prefix="/ws")
 

@@ -36,6 +36,10 @@ dependencies = [
     # Utilities
     "httpx==0.28.*",
     "structlog==24.*",
+    # Auth
+    "PyJWT==2.*",
+    "bcrypt==4.*",
+    "python-multipart==0.0.*",
 ]
 
 [dependency-groups]

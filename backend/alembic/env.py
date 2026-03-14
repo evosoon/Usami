@@ -5,7 +5,6 @@ Usami — Alembic env.py
 
 from __future__ import annotations
 
-import os
 import sys
 from logging.config import fileConfig
 from pathlib import Path
@@ -16,6 +15,10 @@ from alembic import context
 
 # 将 backend/ 加入 sys.path 以便 import core.memory
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# 复用 core.config 的 load_dotenv 链（.env.example → .env），
+# 确保 DATABASE_URL 等环境变量在 alembic 命令行下也能正确加载。
+from core.config import load_config
 
 from core.memory import Base
 
@@ -31,13 +34,10 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    """从环境变量获取数据库 URL，转换为 psycopg 同步驱动格式"""
-    url = os.getenv(
-        "DATABASE_URL",
-        "postgresql://agenticOS:agenticOS@localhost:5432/agenticOS",
-    )
+    """从 AppConfig 获取数据库 URL，转换为 psycopg 同步驱动格式"""
+    app_config = load_config()
     # Alembic 使用同步 psycopg 驱动
-    return url.replace("postgresql://", "postgresql+psycopg://")
+    return app_config.database_url.replace("postgresql://", "postgresql+psycopg://")
 
 
 def run_migrations_offline() -> None:
