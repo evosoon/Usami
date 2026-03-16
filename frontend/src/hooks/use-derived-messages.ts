@@ -10,6 +10,7 @@ export interface ChatMessage {
   variant?: "progress" | "plan" | "result" | "error" | "status";
   content: string;
   plan?: Thread["taskPlan"];
+  isStreaming?: boolean;
 }
 
 export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
@@ -70,6 +71,15 @@ export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
           });
           break;
 
+        case "task.aggregating":
+          messages.push({
+            id,
+            role: "system",
+            variant: "progress",
+            content: t("aggregating"),
+          });
+          break;
+
         case "task.completed":
           messages.push({
             id,
@@ -108,6 +118,17 @@ export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
         role: "system",
         variant: "result",
         content: thread.result,
+      });
+    }
+
+    // Streaming result: show accumulated chunks while aggregation is in progress
+    if (thread.streamingResult && thread.phase === "aggregating") {
+      messages.push({
+        id: `${thread.threadId}-streaming`,
+        role: "system",
+        variant: "result",
+        content: thread.streamingResult,
+        isStreaming: true,
       });
     }
 

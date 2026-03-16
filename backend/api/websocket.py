@@ -6,7 +6,6 @@ Usami — WebSocket Handler
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 
 import structlog
@@ -42,9 +41,11 @@ class ConnectionManager:
 
     async def broadcast(self, event: dict):
         """广播事件给所有连接"""
-        for ws in self.active_connections.values():
-            with contextlib.suppress(Exception):
+        for cid, ws in self.active_connections.items():
+            try:
                 await ws.send_json(event)
+            except Exception as e:
+                logger.warning("ws_send_failed", client_id=cid, error=str(e))
 
 
 @router.websocket("/{client_id}")

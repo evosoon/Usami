@@ -10,6 +10,7 @@ export type Phase =
   | "planned"
   | "executing"
   | "hitl_waiting"
+  | "aggregating"
   | "completed"
   | "failed";
 
@@ -23,6 +24,8 @@ export interface Thread {
   pendingHitl: HiTLRequest[];
   result: string | null;
   error: string | null;
+  streamingResult: string;
+  lastHeartbeat: number | null;
 }
 
 interface ThreadStore {
@@ -41,6 +44,7 @@ const EVENT_TO_PHASE: Record<string, Phase> = {
   "task.plan_ready": "planned",
   "task.executing": "executing",
   "task.progress": "executing",
+  "task.aggregating": "aggregating",
   "task.completed": "completed",
   "task.failed": "failed",
   "hitl.request": "hitl_waiting",
@@ -65,6 +69,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         pendingHitl: [],
         result: null,
         error: null,
+        streamingResult: "",
+        lastHeartbeat: null,
       });
       return { threads, activeThreadId: threadId };
     }),
@@ -74,7 +80,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       const threads = new Map(state.threads);
       const thread = threads.get(threadId);
       if (!thread) {
-        // Auto-create thread from WS event if missing
+        // Auto-create thread from WS event if missing (WS arrived before REST response)
         const intent = "type" in event && event.type === "task.created" ? event.intent : "";
         threads.set(threadId, {
           threadId,
@@ -86,6 +92,27 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           pendingHitl: [],
           result: null,
           error: event.type === "task.failed" ? event.error : null,
+          streamingResult: "",
+          lastHeartbeat: null,
+        });
+        // If no active thread, activate this one so user sees messages
+        const activeThreadId = event.type === "task.created" && !state.activeThreadId
+          ? threadId
+          : state.activeThreadId;
+        return { threads, activeThreadId };
+      }
+
+      // Heartbeat: update timestamp only, don't append to events (avoid pollution)
+      if (event.type === "task.heartbeat") {
+        threads.set(threadId, { ...thread, lastHeartbeat: Date.now() });
+        return { threads };
+      }
+
+      // Streaming chunk: accumulate without appending to events array
+      if (event.type === "task.result_chunk") {
+        threads.set(threadId, {
+          ...thread,
+          streamingResult: thread.streamingResult + event.chunk,
         });
         return { threads };
       }
@@ -95,12 +122,17 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       const error = event.type === "task.failed" ? event.error : thread.error;
       const result = event.type === "task.completed" && event.result ? event.result : thread.result;
 
+      // Reset streaming state on aggregation start; clear on completion
+      const streamingResult = event.type === "task.aggregating" ? ""
+        : event.type === "task.completed" ? ""
+        : thread.streamingResult;
+
       // Handle HiTL request from WS — append to pendingHitl
       const pendingHitl = event.type === "hitl.request"
         ? [...thread.pendingHitl, event.request]
         : thread.pendingHitl;
 
-      threads.set(threadId, { ...thread, events, phase, error, result, pendingHitl });
+      threads.set(threadId, { ...thread, events, phase, error, result, pendingHitl, streamingResult });
       return { threads };
     }),
 

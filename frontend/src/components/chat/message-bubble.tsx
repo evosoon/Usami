@@ -64,7 +64,7 @@ function PlanBubble({ message }: { message: ChatMessage }) {
   );
 }
 
-function ResultBubble({ content }: { content: string }) {
+function ResultBubble({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
   return (
     <div className="flex justify-start">
       <div className="max-w-[90%] rounded-2xl bg-background border px-4 py-3">
@@ -74,6 +74,9 @@ function ResultBubble({ content }: { content: string }) {
         >
           {content}
         </Streamdown>
+        {isStreaming && (
+          <span className="inline-block h-4 w-0.5 animate-pulse bg-foreground/60 ml-0.5 align-text-bottom" />
+        )}
       </div>
     </div>
   );
@@ -110,7 +113,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     case "plan":
       return <PlanBubble message={message} />;
     case "result":
-      return <ResultBubble content={message.content} />;
+      return <ResultBubble content={message.content} isStreaming={message.isStreaming} />;
     case "error":
       return <ErrorBubble content={message.content} />;
     case "status":

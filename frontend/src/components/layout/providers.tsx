@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { useWsStore } from "@/stores/ws-store";
 import { useThreadStore } from "@/stores/thread-store";
+import { useAuthStore } from "@/stores/auth-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { HiTLDialog } from "@/components/hitl/hitl-dialog";
 import type { HiTLRequest } from "@/types/api";
@@ -16,13 +17,19 @@ function WsConnector() {
   const connect = useWsStore((s) => s.connect);
   const disconnect = useWsStore((s) => s.disconnect);
   const status = useWsStore((s) => s.status);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const queryClient = useQueryClient();
   const wasConnected = useRef(false);
 
+  // Connect only when authenticated; disconnect on logout
   useEffect(() => {
-    connect();
+    if (isAuthenticated) {
+      connect();
+    } else {
+      disconnect();
+    }
     return () => disconnect();
-  }, [connect, disconnect]);
+  }, [isAuthenticated, connect, disconnect]);
 
   // On WS reconnect, refetch active thread to catch missed events
   useEffect(() => {

@@ -5,6 +5,9 @@ import type { WsServerEvent, WsClientEvent } from "@/types/ws";
 type EventHandler = (event: WsServerEvent) => void;
 type StatusHandler = (status: "connecting" | "connected" | "disconnected") => void;
 
+/** Auth failure close code sent by backend */
+const WS_AUTH_FAILED = 4001;
+
 export class UsamiWebSocket {
   private ws: WebSocket | null = null;
   private clientId: string;
@@ -16,6 +19,7 @@ export class UsamiWebSocket {
   private shouldReconnect = true;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private getToken: (() => string | null) | null = null;
+  private authFailedHandlers = new Set<() => void>();
 
   constructor(url: string, getToken?: () => string | null) {
     let id = sessionStorage.getItem("usami_client_id");
@@ -28,6 +32,7 @@ export class UsamiWebSocket {
     this.getToken = getToken ?? null;
   }
 
+  /** Build WS URL with fresh token on every call */
   private buildUrl(): string {
     const token = this.getToken?.();
     if (token) {
@@ -40,6 +45,7 @@ export class UsamiWebSocket {
     this.shouldReconnect = true;
     this.notifyStatus("connecting");
 
+    // Build URL with fresh token each connect attempt
     const ws = new WebSocket(this.buildUrl());
 
     ws.onopen = () => {
@@ -56,8 +62,14 @@ export class UsamiWebSocket {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       this.notifyStatus("disconnected");
+      // Auth failure: do not auto-reconnect, notify listeners
+      if (e.code === WS_AUTH_FAILED) {
+        this.shouldReconnect = false;
+        this.authFailedHandlers.forEach((h) => h());
+        return;
+      }
       if (this.shouldReconnect) {
         this.scheduleReconnect();
       }
@@ -95,6 +107,11 @@ export class UsamiWebSocket {
   onStatus(handler: StatusHandler): () => void {
     this.statusHandlers.add(handler);
     return () => this.statusHandlers.delete(handler);
+  }
+
+  onAuthFailed(handler: () => void): () => void {
+    this.authFailedHandlers.add(handler);
+    return () => this.authFailedHandlers.delete(handler);
   }
 
   getClientId(): string {

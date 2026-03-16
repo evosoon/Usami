@@ -28,6 +28,7 @@
     "planReady": "Plan ready: {count} subtasks",
     "executing": "[{persona}] Executing...",
     "progress": "[{persona}] {status}",
+    "aggregating": "Synthesizing results...",
     "completed": "Task completed",
     "failed": "Task failed: {error}",
     "hitlWaiting": "Waiting for your confirmation...",
@@ -43,6 +44,7 @@
     "planning": "Planning",
     "planned": "Plan Ready",
     "executing": "Executing",
+    "aggregating": "Aggregating",
     "hitl_waiting": "Awaiting Confirmation",
     "completed": "Completed",
     "failed": "Failed"
@@ -182,5 +184,9 @@
     "title": "Usami",
     "description": "Multi-agent collaborative personal AI operating system for technical research and knowledge synthesis",
     "aboutDescription": "Usami architecture design and tech stack introduction"
+  },
+  "ws": {
+    "disconnected": "Connection lost",
+    "connecting": "Reconnecting..."
   }
 }

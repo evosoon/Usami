@@ -10,6 +10,7 @@ Pre-mortem fixes incorporated:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import Callable
@@ -84,6 +85,20 @@ def build_boss_graph(
             except Exception as e:
                 logger.warning("event_emit_failed", event_type=event_type, error=str(e))
 
+    async def _start_heartbeat(thread_id: str, phase: str) -> asyncio.Task:
+        """Start a background heartbeat task that emits periodic keep-alive events."""
+        start_time = asyncio.get_event_loop().time()
+        async def _beat():
+            while True:
+                await asyncio.sleep(8)
+                elapsed = int(asyncio.get_event_loop().time() - start_time)
+                await emit("task.heartbeat", {
+                    "thread_id": thread_id,
+                    "phase": phase,
+                    "elapsed_s": elapsed,
+                })
+        return asyncio.create_task(_beat())
+
     # --- Node: Planning ---
     async def planning_node(state: dict) -> dict:
         """Boss understands intent, generates task plan"""
@@ -108,10 +123,14 @@ def build_boss_graph(
 
         boss_model = persona_factory.model_router.get_model("planning")
         model_router = persona_factory.model_router
-        response = await model_router.ainvoke_with_retry(boss_model, [
-            SystemMessage(content=PLANNING_SYSTEM_MESSAGE),
-            HumanMessage(content=prompt),
-        ])
+        heartbeat = await _start_heartbeat(thread_id, "planning")
+        try:
+            response = await model_router.ainvoke_with_retry(boss_model, [
+                SystemMessage(content=PLANNING_SYSTEM_MESSAGE),
+                HumanMessage(content=prompt),
+            ])
+        finally:
+            heartbeat.cancel()
 
         # Parse Boss output into TaskPlan
         try:
@@ -262,10 +281,14 @@ def build_boss_graph(
                 }
 
                 logger.info("persona_invoking", persona=task.assigned_persona, task_id=task.task_id)
-                result = await persona_agent.ainvoke(
-                    persona_input,
-                    config={"recursion_limit": 10},
-                )
+                heartbeat = await _start_heartbeat(thread_id, "executing")
+                try:
+                    result = await persona_agent.ainvoke(
+                        persona_input,
+                        config={"recursion_limit": 10},
+                    )
+                finally:
+                    heartbeat.cancel()
                 logger.info("persona_completed", persona=task.assigned_persona, task_id=task.task_id)
                 result_content = result["messages"][-1].content if result.get("messages") else ""
 
@@ -313,7 +336,6 @@ def build_boss_graph(
                 return task, output, hitl_req
 
         # Run all ready tasks in parallel
-        import asyncio
         results = await asyncio.gather(
             *[_run_single_task(t) for t in ready_tasks],
             return_exceptions=True,
@@ -376,7 +398,7 @@ def build_boss_graph(
             await emit("task.completed", {"thread_id": thread_id, "result": full_result})
             return {"task_outputs": task_outputs, "current_phase": "done"}
 
-        # Multi-task: LLM aggregation
+        # Multi-task: LLM aggregation (streamed)
         task_summaries = "\n".join(
             f"[{tid}] ({_get(output, 'persona', 'unknown')}): {_get(output, 'summary', '')}"
             for tid, output in task_outputs.items()
@@ -387,23 +409,39 @@ def build_boss_graph(
             task_summaries=task_summaries,
         )
 
+        await emit("task.aggregating", {"thread_id": thread_id})
+
         boss_model = persona_factory.model_router.get_model("writing")
         model_router = persona_factory.model_router
-        response = await model_router.ainvoke_with_retry(boss_model, [
+        messages = [
             SystemMessage(content=AGGREGATION_SYSTEM_MESSAGE),
             HumanMessage(content=prompt),
-        ])
+        ]
+
+        full_result = ""
+        heartbeat = await _start_heartbeat(thread_id, "aggregating")
+        try:
+            async for chunk in model_router.astream_with_retry(boss_model, messages):
+                token = chunk.content if hasattr(chunk, "content") else str(chunk)
+                if token:
+                    full_result += token
+                    await emit("task.result_chunk", {
+                        "thread_id": thread_id,
+                        "chunk": token,
+                    })
+        finally:
+            heartbeat.cancel()
 
         final_output = TaskOutput(
             task_id="final",
             persona="boss",
             summary=FINAL_REPORT_SUMMARY,
-            full_result=response.content,
+            full_result=full_result,
             confidence=1.0,
         )
 
         task_outputs["final"] = final_output
-        await emit("task.completed", {"thread_id": thread_id, "result": final_output.full_result})
+        await emit("task.completed", {"thread_id": thread_id, "result": full_result})
         return {
             "task_outputs": task_outputs,
             "current_phase": "done",

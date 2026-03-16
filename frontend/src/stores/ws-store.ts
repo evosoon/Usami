@@ -25,6 +25,10 @@ export const useWsStore = create<WsStore>((set, get) => ({
     // Prevent duplicate connections
     if (get().ws) return;
 
+    // Do not connect without auth token
+    const token = useAuthStore.getState().accessToken;
+    if (!token) return;
+
     const ws = new UsamiWebSocket(WS_URL, () => useAuthStore.getState().accessToken);
 
     ws.onEvent((event) => {
@@ -35,6 +39,12 @@ export const useWsStore = create<WsStore>((set, get) => ({
 
     ws.onStatus((status) => {
       set({ status });
+    });
+
+    ws.onAuthFailed(() => {
+      // Token expired or invalid — clear WS and redirect to login
+      get().disconnect();
+      useAuthStore.getState().logout();
     });
 
     ws.connect();

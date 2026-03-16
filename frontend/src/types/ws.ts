@@ -7,8 +7,11 @@ export type WsServerEvent =
   | { type: "task.plan_ready"; thread_id: string; plan_id: string; task_count: number }
   | { type: "task.executing"; thread_id: string; task_id: string; persona: string }
   | { type: "task.progress"; thread_id: string; task_id: string; status: string; persona: string }
+  | { type: "task.aggregating"; thread_id: string }
+  | { type: "task.result_chunk"; thread_id: string; chunk: string }
   | { type: "task.completed"; thread_id: string; result?: string }
   | { type: "task.failed"; thread_id: string; task_id: string; error: string }
+  | { type: "task.heartbeat"; thread_id: string; phase: string; elapsed_s: number }
   | { type: "hitl.request"; thread_id: string; request: HiTLRequest };
 
 // Client -> Server events (websocket.py handles)

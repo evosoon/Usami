@@ -63,13 +63,28 @@ async def create_task(req: TaskRequest, request: Request, _user: UserProfile = D
     async def _run():
         try:
             config = {"configurable": {"thread_id": thread_id}}
-            final_state = await boss_graph.ainvoke(
-                {"user_intent": req.intent, "current_phase": "init", "thread_id": thread_id},
-                config=config,
+            final_state = await asyncio.wait_for(
+                boss_graph.ainvoke(
+                    {"user_intent": req.intent, "current_phase": "init", "thread_id": thread_id},
+                    config=config,
+                ),
+                timeout=600,  # 10 minutes
             )
             task_record["result"] = final_state
             task_record["status"] = "done"
             logger.info("task_completed", thread_id=thread_id)
+        except asyncio.TimeoutError:
+            task_record["error"] = "任务执行超时（10分钟）"
+            task_record["status"] = "error"
+            logger.error("task_timeout", thread_id=thread_id)
+            ws_manager = getattr(request.app.state, "ws_manager", None)
+            if ws_manager:
+                await ws_manager.broadcast({
+                    "type": "task.failed",
+                    "thread_id": thread_id,
+                    "task_id": "timeout",
+                    "error": "任务执行超时（10分钟）",
+                })
         except Exception as e:
             task_record["error"] = str(e)
             task_record["status"] = "error"
