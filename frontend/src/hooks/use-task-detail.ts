@@ -21,12 +21,14 @@ export function useTaskDetail(threadId: string | null) {
       return data;
     },
     enabled: !!threadId,
-    refetchInterval: (query) => {
-      // Poll every 3s when task is actively running (for HiTL fallback)
-      const phase = useThreadStore.getState().threads.get(threadId ?? "")?.phase;
-      const activePhases: Phase[] = ["executing", "planned", "planning"];
-      if (phase && activePhases.includes(phase)) return 3000;
-      return false;
+    // Safety-net: slow poll during active phases only.
+    // Primary updates still come from WS in real-time.
+    // On WS reconnect, ws-store invalidates this query to catch up.
+    refetchInterval: () => {
+      const thread = useThreadStore.getState().threads.get(threadId ?? "");
+      if (!thread) return false;
+      const activePhases: Phase[] = ["planning", "planned", "executing", "hitl_waiting"];
+      return activePhases.includes(thread.phase) ? 10_000 : false;
     },
   });
 }

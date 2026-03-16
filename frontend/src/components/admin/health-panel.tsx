@@ -1,3 +1,6 @@
+"use client";
+
+import { useTranslations } from "next-intl";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { HealthStatus } from "@/types/api";
@@ -8,22 +11,23 @@ interface HealthPanelProps {
 
 export function HealthPanel({ health }: HealthPanelProps) {
   const isOk = health.status === "ok";
+  const t = useTranslations("admin");
 
   return (
     <div className="space-y-4">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
-            服务状态
+            {t("serviceStatus")}
             <Badge variant={isOk ? "default" : "destructive"}>
-              {isOk ? "正常" : "降级"}
+              {isOk ? t("normal") : t("degraded")}
             </Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <dl className="grid grid-cols-2 gap-4 text-sm">
             <div>
-              <dt className="text-muted-foreground">服务</dt>
+              <dt className="text-muted-foreground">{t("service")}</dt>
               <dd className="font-medium">{health.service}</dd>
             </div>
             {health.litellm && (

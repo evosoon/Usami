@@ -1,13 +1,13 @@
 "use client";
 
 import { use } from "react";
+import { useTranslations } from "next-intl";
 import { useTaskDetail } from "@/hooks/use-task-detail";
 import { useThreadStore } from "@/stores/thread-store";
 import { TaskDag } from "@/components/task/task-dag";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PHASE_LABELS } from "@/lib/constants";
 import type { TaskStatus } from "@/types/api";
 
 export default function TaskDetailPage({
@@ -18,6 +18,7 @@ export default function TaskDetailPage({
   const { threadId } = use(params);
   const { data, isLoading } = useTaskDetail(threadId);
   const thread = useThreadStore((s) => s.threads.get(threadId));
+  const t = useTranslations();
 
   if (isLoading) {
     return (
@@ -31,7 +32,7 @@ export default function TaskDetailPage({
   if (!data) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-muted-foreground">任务未找到</p>
+        <p className="text-muted-foreground">{t("task.notFound")}</p>
       </div>
     );
   }
@@ -53,11 +54,11 @@ export default function TaskDetailPage({
       {/* Header */}
       <div className="border-b px-6 py-4">
         <h1 className="text-lg font-semibold">
-          {data.task_plan?.user_intent ?? "任务详情"}
+          {data.task_plan?.user_intent ?? t("task.detail")}
         </h1>
         <div className="mt-1 flex items-center gap-2">
           <Badge variant="secondary">
-            {thread ? PHASE_LABELS[thread.phase] : data.status}
+            {thread ? t(`phase.${thread.phase}`) : data.status}
           </Badge>
           <span className="text-sm text-muted-foreground">
             {threadId}
@@ -75,7 +76,7 @@ export default function TaskDetailPage({
         </div>
       ) : (
         <div className="flex flex-1 items-center justify-center">
-          <p className="text-muted-foreground">任务计划尚未生成</p>
+          <p className="text-muted-foreground">{t("task.planNotReady")}</p>
         </div>
       )}
 
@@ -84,7 +85,7 @@ export default function TaskDetailPage({
         <div className="border-t p-4">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">执行结果</CardTitle>
+              <CardTitle className="text-sm">{t("task.result")}</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground line-clamp-3">

@@ -16,6 +16,20 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
+  // Admin routes require admin role (decode JWT payload without verification —
+  // backend verifies the full token on every API call)
+  if (pathname.startsWith("/admin")) {
+    try {
+      const payload = JSON.parse(atob(token.split(".")[1]));
+      if (payload.role !== "admin") {
+        return NextResponse.redirect(new URL("/chat", request.url));
+      }
+    } catch {
+      // Malformed token — let backend reject it
+      return NextResponse.next();
+    }
+  }
+
   return NextResponse.next();
 }
 

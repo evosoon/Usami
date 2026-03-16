@@ -18,13 +18,3 @@ export const WS_URL = resolveWsUrl();
 
 // Server-side API (Server Component direct connection, Docker internal)
 export const BACKEND_INTERNAL_URL = process.env.BACKEND_INTERNAL_URL || "http://localhost:8000";
-
-export const PHASE_LABELS: Record<string, string> = {
-  created: "已创建",
-  planning: "规划中",
-  planned: "计划就绪",
-  executing: "执行中",
-  hitl_waiting: "等待确认",
-  completed: "已完成",
-  failed: "失败",
-};

@@ -19,13 +19,16 @@ backend/
 │   ├── model_router.py      # Task-type routing + CircuitBreaker + retry
 │   ├── plan_validator.py    # Deterministic DAG validation of Boss output
 │   ├── hitl.py              # HiTL gateway (confidence/cost/retry triggers)
-│   └── memory.py            # SQLAlchemy models + DB init (Alembic)
+│   ├── memory.py            # SQLAlchemy models + DB init (Alembic)
+│   ├── auth.py              # JWT auth, password hashing, FastAPI dependencies, admin seed
+│   └── push.py              # Web Push notifications via pywebpush (VAPID)
 ├── agents/
 │   ├── boss.py              # Boss supervisor graph (planning -> validate -> execute -> aggregate)
 │   └── prompts.py           # All prompt templates and message constants (Boss + HiTL)
 ├── api/
 │   ├── routes.py            # REST endpoints (POST /tasks, GET /tasks/{id}, POST /tasks/{id}/hitl)
-│   └── websocket.py         # WS /ws/{client_id} + ConnectionManager
+│   ├── websocket.py         # WS /ws/{client_id} + ConnectionManager
+│   └── notification_routes.py # Push subscription endpoints (subscribe, unsubscribe, VAPID key)
 ├── scheduler/
 │   ├── cron.py              # APScheduler cron jobs
 │   └── events.py            # Redis pub/sub event bus
@@ -47,6 +50,8 @@ model_router.py   <- (standalone, uses langchain_openai)
 tool_registry.py  <- (standalone, uses langchain_core.tools)
 plan_validator.py <- state.py
 hitl.py           <- state.py
+auth.py           <- state.py, memory.py (User model)
+push.py           <- config.py, memory.py (PushSubscription model)
 persona_factory.py <- tool_registry, model_router
 prompts.py        <- (no deps, pure string constants)
 boss.py           <- state, plan_validator, hitl, persona_factory, prompts
@@ -113,6 +118,15 @@ config -> database -> tool_registry -> persona_factory -> hitl_gateway
 
 Checkpointer failure is non-fatal — system runs without persistence.
 
+### Authentication
+
+`core/auth.py` uses module-level globals initialized once at startup via `init_auth(config)`.
+
+- **Token lifecycle**: Access token (15min, configurable) + Refresh token (7d, configurable). Stored as cookies.
+- **Dependencies**: `get_current_user` (extracts user from `Authorization` header or `access_token` cookie) and `require_admin` (checks `UserRole.ADMIN`).
+- **Password hashing**: bcrypt via `hash_password()` / `verify_password()`.
+- **Admin seeding**: `seed_admin_user()` creates admin from `ADMIN_EMAIL`/`ADMIN_PASSWORD` env vars if not exists. Called during lifespan startup.
+
 ### API request/response models live in routes.py
 
 `TaskRequest`, `TaskResponse`, `HiTLResolveRequest` are in `api/routes.py`, not `core/state.py`. This is intentional — API models are separate from domain models.
@@ -129,7 +143,7 @@ Checkpointer failure is non-fatal — system runs without persistence.
 
 ## Database migrations
 
-- Models in `core/memory.py` (SQLAlchemy): `TaskLog`, `HiTLEventLog`, `RoutingLog`.
+- Models in `core/memory.py` (SQLAlchemy): `TaskLog`, `HiTLEventLog`, `RoutingLog`, `User`, `PushSubscription`.
 - `init_database()` runs `alembic upgrade head` (sync, blocks briefly at startup).
 - `init_database_for_tests()` uses `create_all()` — fast, skips Alembic.
 - New table: add SQLAlchemy model in `memory.py`, then `alembic revision --autogenerate`.

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import structlog
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, String, Text, func
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, String, Text, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -100,6 +100,18 @@ class User(Base):
     is_active = Column(Boolean, default=True, server_default="true")
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class PushSubscription(Base):
+    """Push notification subscriptions (Web Push API)"""
+    __tablename__ = "push_subscriptions"
+
+    id = Column(String, primary_key=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    endpoint = Column(String, nullable=False, unique=True)
+    p256dh = Column(String, nullable=False)
+    auth_key = Column(String, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
 
 
 # ============================================

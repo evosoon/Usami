@@ -1,7 +1,17 @@
+import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
-export default function HomePage() {
+export default async function HomePage() {
+  const t = await getTranslations("landing");
+
+  const features = [
+    { title: t("featureAgents"), desc: t("featureAgentsDesc") },
+    { title: t("featureDag"), desc: t("featureDagDesc") },
+    { title: t("featureHitl"), desc: t("featureHitlDesc") },
+    { title: t("featureKnowledge"), desc: t("featureKnowledgeDesc") },
+  ];
+
   return (
     <div className="flex min-h-screen flex-col">
       {/* Hero */}
@@ -10,14 +20,14 @@ export default function HomePage() {
           Usami
         </h1>
         <p className="max-w-2xl text-xl text-muted-foreground">
-          Personal AI Operating System — 多 Agent 协作的技术调研与知识凝练平台
+          {t("subtitle")}
         </p>
         <div className="flex gap-4 mt-4">
           <Button size="lg" render={<Link href="/chat" />}>
-            开始使用
+            {t("getStarted")}
           </Button>
           <Button variant="outline" size="lg" render={<Link href="/about" />}>
-            了解更多
+            {t("learnMore")}
           </Button>
         </div>
       </section>
@@ -25,12 +35,7 @@ export default function HomePage() {
       {/* Features */}
       <section className="border-t bg-muted/50 px-6 py-16">
         <div className="mx-auto grid max-w-5xl gap-8 sm:grid-cols-2 lg:grid-cols-4">
-          {[
-            { title: "多 Agent 协作", desc: "Boss-Worker 架构，自动分解任务并分配给专业 Agent" },
-            { title: "DAG 任务编排", desc: "可视化任务依赖图，实时追踪每个子任务的执行状态" },
-            { title: "HiTL 审批", desc: "关键节点人机协作，低置信度和高成本操作需人工确认" },
-            { title: "知识凝练", desc: "研究结果自动聚合，生成结构化的技术报告" },
-          ].map((item) => (
+          {features.map((item) => (
             <div key={item.title} className="space-y-2">
               <h3 className="font-semibold">{item.title}</h3>
               <p className="text-sm text-muted-foreground">{item.desc}</p>

@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { BACKEND_INTERNAL_URL } from "./constants";
 import type {
   TaskResponse,
@@ -14,8 +15,17 @@ async function serverFetch<T>(
   path: string,
   options?: RequestInit & { next?: { revalidate?: number } },
 ): Promise<T> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get("access_token")?.value;
+
+  const headers = new Headers(options?.headers);
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
   const res = await fetch(`${BACKEND_INTERNAL_URL}${path}`, {
     ...options,
+    headers,
     next: { revalidate: options?.next?.revalidate ?? 0 },
   } as RequestInit);
   if (!res.ok) throw new Error(`Backend ${path}: ${res.status}`);

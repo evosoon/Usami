@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +15,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const setAuth = useAuthStore((s) => s.setAuth);
   const router = useRouter();
+  const t = useTranslations("auth");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,14 +31,14 @@ export default function LoginPage() {
 
       if (!res.ok) {
         const body = await res.text();
-        throw new Error(body || "登录失败");
+        throw new Error(body || t("loginFailed"));
       }
 
       const data = await res.json();
       setAuth(data.user, data.access_token);
       router.push("/chat");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "登录失败");
+      setError(err instanceof Error ? err.message : t("loginFailed"));
     } finally {
       setLoading(false);
     }
@@ -46,14 +48,14 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center px-4">
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl">登录 Usami</CardTitle>
+          <CardTitle className="text-2xl">{t("loginTitle")}</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <Input
                 type="email"
-                placeholder="邮箱"
+                placeholder={t("email")}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -62,7 +64,7 @@ export default function LoginPage() {
             <div className="space-y-2">
               <Input
                 type="password"
-                placeholder="密码"
+                placeholder={t("password")}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -72,7 +74,7 @@ export default function LoginPage() {
               <p className="text-sm text-destructive">{error}</p>
             )}
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "登录中..." : "登录"}
+              {loading ? t("loggingIn") : t("loginButton")}
             </Button>
           </form>
         </CardContent>

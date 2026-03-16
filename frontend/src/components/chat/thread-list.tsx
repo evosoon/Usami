@@ -1,11 +1,11 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import { PHASE_LABELS } from "@/lib/constants";
 import { useThreadStore } from "@/stores/thread-store";
 import type { Phase } from "@/stores/thread-store";
 
@@ -19,20 +19,21 @@ const PHASE_BADGE_VARIANT: Record<Phase, "default" | "secondary" | "destructive"
   failed: "destructive",
 };
 
-function timeAgo(ts: number): string {
-  const diff = Date.now() - ts;
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes}分钟前`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}小时前`;
-  return `${Math.floor(hours / 24)}天前`;
-}
-
 export function ThreadList() {
   const threads = useThreadStore((s) => s.threads);
   const activeThreadId = useThreadStore((s) => s.activeThreadId);
   const setActiveThread = useThreadStore((s) => s.setActiveThread);
+  const t = useTranslations();
+
+  function timeAgo(ts: number): string {
+    const diff = Date.now() - ts;
+    const minutes = Math.floor(diff / 60_000);
+    if (minutes < 1) return t("chat.timeJustNow");
+    if (minutes < 60) return t("chat.timeMinutesAgo", { count: minutes });
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return t("chat.timeHoursAgo", { count: hours });
+    return t("chat.timeDaysAgo", { count: Math.floor(hours / 24) });
+  }
 
   const sortedThreads = [...threads.values()].sort(
     (a, b) => b.createdAt - a.createdAt,
@@ -46,7 +47,7 @@ export function ThreadList() {
           className="w-full"
           onClick={() => setActiveThread(null)}
         >
-          + 新对话
+          + {t("nav.newThread")}
         </Button>
       </div>
       <Separator />
@@ -67,7 +68,7 @@ export function ThreadList() {
               </span>
               <span className="flex items-center gap-2">
                 <Badge variant={PHASE_BADGE_VARIANT[thread.phase]} className="text-xs">
-                  {PHASE_LABELS[thread.phase]}
+                  {t(`phase.${thread.phase}`)}
                 </Badge>
                 <span className="text-xs text-muted-foreground">
                   {timeAgo(thread.createdAt)}
@@ -77,7 +78,7 @@ export function ThreadList() {
           ))}
           {sortedThreads.length === 0 && (
             <p className="px-3 py-8 text-center text-xs text-muted-foreground">
-              暂无对话
+              {t("chat.noThreads")}
             </p>
           )}
         </div>

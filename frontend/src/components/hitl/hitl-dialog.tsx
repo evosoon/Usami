@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import {
   Dialog,
   DialogContent,
@@ -25,6 +26,7 @@ interface HiTLDialogProps {
 export function HiTLDialog({ request, threadId, open, onClose }: HiTLDialogProps) {
   const [feedback, setFeedback] = useState("");
   const { mutate: resolve, isPending } = useResolveHitl(threadId);
+  const t = useTranslations("hitl");
 
   const handleDecision = (decision: string) => {
     resolve(
@@ -63,7 +65,7 @@ export function HiTLDialog({ request, threadId, open, onClose }: HiTLDialogProps
         <Textarea
           value={feedback}
           onChange={(e) => setFeedback(e.target.value)}
-          placeholder="附加反馈 (可选)"
+          placeholder={t("feedbackPlaceholder")}
           className="min-h-[60px]"
         />
 

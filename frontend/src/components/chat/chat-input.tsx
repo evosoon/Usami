@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useCallback } from "react";
+import { useTranslations } from "next-intl";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useCreateTask } from "@/hooks/use-create-task";
@@ -9,6 +10,7 @@ export function ChatInput() {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { mutate: createTask, isPending } = useCreateTask();
+  const t = useTranslations("chat");
 
   const handleSubmit = useCallback(() => {
     const trimmed = value.trim();
@@ -32,7 +34,7 @@ export function ChatInput() {
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="输入你的需求..."
+          placeholder={t("placeholder")}
           disabled={isPending}
           className="min-h-[44px] max-h-[200px] resize-none"
           rows={1}
@@ -42,7 +44,7 @@ export function ChatInput() {
           disabled={!value.trim() || isPending}
           size="lg"
         >
-          {isPending ? "发送中..." : "发送"}
+          {isPending ? t("sending") : t("send")}
         </Button>
       </div>
     </div>

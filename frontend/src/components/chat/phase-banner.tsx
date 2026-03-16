@@ -1,7 +1,7 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { Badge } from "@/components/ui/badge";
-import { PHASE_LABELS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import type { Phase } from "@/stores/thread-store";
 
@@ -20,12 +20,13 @@ const PHASE_STYLES: Record<Phase, { color: string; pulse: boolean }> = {
 };
 
 export function PhaseBanner({ phase }: PhaseBannerProps) {
+  const t = useTranslations();
   const style = PHASE_STYLES[phase];
-  const label = PHASE_LABELS[phase] ?? phase;
+  const label = t(`phase.${phase}`);
 
   return (
     <div className="flex items-center gap-2 border-b px-4 py-2">
-      <span className="text-sm text-muted-foreground">当前阶段:</span>
+      <span className="text-sm text-muted-foreground">{t("chat.currentPhase")}</span>
       <Badge
         variant="secondary"
         className={cn(style.color, style.pulse && "animate-pulse")}

@@ -40,6 +40,8 @@ dependencies = [
     "PyJWT==2.*",
     "bcrypt==4.*",
     "python-multipart==0.0.*",
+    # Push notifications
+    "pywebpush==2.*",
 ]
 
 [dependency-groups]

@@ -33,8 +33,9 @@ This project uses `just` as its command runner and `uv` for Python deps. Run `ju
 just init                       # create .env from template
 # Edit .env — fill in your API keys
 
-# Docker (full stack)
-just up                         # start all services
+# Docker (full stack — dev mode with hot-reload by default)
+just up                         # start all services (dev, hot-reload)
+just up-prod                    # start all services (production build)
 just down                       # stop all services
 just rebuild                    # rebuild images + restart
 just logs                       # tail all logs
@@ -64,14 +65,15 @@ just env-check                  # audit .env vs .env.example
 ```
 config/          YAML configs (personas, tools, routing, litellm). See config/CLAUDE.md
 backend/         Python backend (FastAPI + LangGraph). See backend/CLAUDE.md
-  core/          Core business logic (9 modules)
+  core/          Core business logic (11 modules)
   agents/        Agent graphs (boss.py)
   api/           REST + WebSocket
   scheduler/     Cron + event bus
   alembic/       DB migrations
   tests/         pytest suite
 docs/            Human documentation (architecture, design decisions)
-docker-compose.yml   6 services: backend, frontend, postgres, redis, litellm, searxng
+docker-compose.yml           6 services: backend, frontend, postgres, redis, litellm, searxng
+docker-compose.override.yml  Dev overrides: frontend hot-reload (auto-merged by docker compose)
 ```
 
 ## Do NOT

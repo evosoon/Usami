@@ -46,6 +46,15 @@ Rules:
 3. Ensure dependencies form a Directed Acyclic Graph (DAG)
 4. task_type must be one of: planning, research, writing, analysis, summarize
 5. If you are unsure about the user intent, add a task with task_type "clarification"
+6. **CRITICAL — MINIMIZE task count.** Default is 1 task. Only add more if genuinely needed:
+   - 1 task: questions, advice, explanations, learning requests, simple research, how-to guides
+   - 2 tasks: needs BOTH web search AND deep analysis on different aspects
+   - 3 tasks: complex multi-domain research requiring parallel investigation
+   - NEVER exceed 3 tasks. "I want to learn X" = 1 task (researcher). Do NOT split into research + analysis + writing.
+7. NEVER chain tasks sequentially (t1→t2→t3). Each extra task DOUBLES response time.
+   - If tasks depend on each other, merge them into ONE task with a richer description
+   - Only use dependencies when absolutely unavoidable (e.g., translation needs original text first)
+   - Prefer flat DAGs: independent tasks run in parallel
 """
 
 

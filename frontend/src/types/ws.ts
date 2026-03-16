@@ -7,7 +7,7 @@ export type WsServerEvent =
   | { type: "task.plan_ready"; thread_id: string; plan_id: string; task_count: number }
   | { type: "task.executing"; thread_id: string; task_id: string; persona: string }
   | { type: "task.progress"; thread_id: string; task_id: string; status: string; persona: string }
-  | { type: "task.completed"; thread_id: string }
+  | { type: "task.completed"; thread_id: string; result?: string }
   | { type: "task.failed"; thread_id: string; task_id: string; error: string }
   | { type: "hitl.request"; thread_id: string; request: HiTLRequest };
 

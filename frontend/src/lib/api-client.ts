@@ -7,6 +7,7 @@ import type {
   SchedulerJob,
   HealthStatus,
 } from "@/types/api";
+import type { AdminUser, CreateUserData } from "@/hooks/use-admin-users";
 
 class ApiError extends Error {
   constructor(
@@ -56,6 +57,33 @@ export const api = {
   getTools: () => request<ToolInfo[]>("/api/v1/tools"),
   getJobs: () => request<SchedulerJob[]>("/api/v1/scheduler/jobs"),
   getHealth: () => request<HealthStatus>("/health"),
+
+  // Admin — user management
+  getUsers: () => request<AdminUser[]>("/api/v1/admin/users"),
+  createUser: (data: CreateUserData) =>
+    request<AdminUser>("/api/v1/admin/users", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateUser: (userId: string, data: { display_name?: string; role?: string; is_active?: boolean }) =>
+    request<AdminUser>(`/api/v1/admin/users/${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  // Push notifications
+  getVapidPublicKey: () =>
+    request<{ vapid_public_key: string }>("/api/v1/notifications/vapid-public-key"),
+  subscribePush: (data: { endpoint: string; p256dh: string; auth: string }) =>
+    request<{ status: string }>("/api/v1/notifications/subscribe", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  unsubscribePush: (endpoint: string) =>
+    request<{ status: string }>("/api/v1/notifications/subscribe", {
+      method: "DELETE",
+      body: JSON.stringify({ endpoint }),
+    }),
 };
 
 export { ApiError };
