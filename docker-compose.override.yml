@@ -14,3 +14,4 @@ services:
       - ./frontend/next.config.ts:/app/next.config.ts
     environment:
       - BACKEND_INTERNAL_URL=http://backend:8000
+      - NEXT_PUBLIC_BACKEND_PORT=${BACKEND_PORT:-42001}

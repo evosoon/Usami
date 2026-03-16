@@ -102,4 +102,4 @@ migration msg: _ensure-env
 
 # Health check
 health:
-    @curl -sf http://localhost:8000/health | python3 -m json.tool || echo "Backend not reachable"
+    @curl -sf http://localhost:${BACKEND_PORT:-42001}/health | python3 -m json.tool || echo "Backend not reachable"
