@@ -43,6 +43,7 @@ const EVENT_TO_PHASE: Record<string, Phase> = {
   "task.progress": "executing",
   "task.completed": "completed",
   "task.failed": "failed",
+  "hitl.request": "hitl_waiting",
 };
 
 export const useThreadStore = create<ThreadStore>((set, get) => ({
@@ -92,8 +93,14 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       const events = [...thread.events, event];
       const phase = EVENT_TO_PHASE[event.type] ?? thread.phase;
       const error = event.type === "task.failed" ? event.error : thread.error;
+      const result = event.type === "task.completed" && event.result ? event.result : thread.result;
 
-      threads.set(threadId, { ...thread, events, phase, error });
+      // Handle HiTL request from WS — append to pendingHitl
+      const pendingHitl = event.type === "hitl.request"
+        ? [...thread.pendingHitl, event.request]
+        : thread.pendingHitl;
+
+      threads.set(threadId, { ...thread, events, phase, error, result, pendingHitl });
       return { threads };
     }),
 
@@ -103,14 +110,17 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       const thread = threads.get(threadId);
       if (!thread) return state;
 
-      threads.set(threadId, { ...thread, ...data });
+      const updated = { ...thread, ...data };
 
-      // Update phase if HiTL pending
+      // Update phase based on REST response data
       if (data.pendingHitl && data.pendingHitl.length > 0) {
-        const updated = threads.get(threadId)!;
-        threads.set(threadId, { ...updated, phase: "hitl_waiting" });
+        updated.phase = "hitl_waiting";
+      } else if (data.result && thread.phase !== "completed") {
+        // REST returned a result but WS event was missed — sync phase
+        updated.phase = "completed";
       }
 
+      threads.set(threadId, updated);
       return { threads };
     }),
 

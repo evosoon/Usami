@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { cn } from "@/lib/utils";
+import { useTranslations } from "next-intl";
+import { MessageSquare, Settings, Shield } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -13,18 +14,17 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarFooter,
 } from "@/components/ui/sidebar";
-
-const NAV_ITEMS = [
-  { label: "对话", href: "/chat", icon: "💬" },
-  { label: "Personas", href: "/admin/personas", icon: "👤" },
-  { label: "工具", href: "/admin/tools", icon: "🔧" },
-  { label: "定时任务", href: "/admin/scheduler", icon: "⏰" },
-  { label: "健康检查", href: "/admin/health", icon: "❤️" },
-];
 
 export function AppSidebar() {
   const pathname = usePathname();
+  const t = useTranslations("nav");
+
+  const navItems = [
+    { label: t("chat"), href: "/chat", icon: MessageSquare },
+    { label: t("settings"), href: "/settings", icon: Settings },
+  ];
 
   return (
     <Sidebar>
@@ -35,16 +35,16 @@ export function AppSidebar() {
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>导航</SidebarGroupLabel>
+          <SidebarGroupLabel>{t("navigation")}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {NAV_ITEMS.map((item) => (
+              {navItems.map((item) => (
                 <SidebarMenuItem key={item.href}>
                   <SidebarMenuButton
                     render={<Link href={item.href} />}
                     isActive={pathname.startsWith(item.href)}
                   >
-                    <span>{item.icon}</span>
+                    <item.icon className="size-4" />
                     <span>{item.label}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -53,6 +53,16 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      <SidebarFooter>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton render={<Link href="/admin/dashboard" />}>
+              <Shield className="size-4" />
+              <span>{t("admin")}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
     </Sidebar>
   );
 }

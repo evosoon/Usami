@@ -57,7 +57,7 @@ async def create_task(req: TaskRequest, request: Request, _user: UserProfile = D
     boss_graph = request.app.state.boss_graph
 
     # 内存级任务追踪: 存储 asyncio.Task + 执行结果 (checkpointer 不可用时的 fallback)
-    task_record = {"task": None, "result": None, "error": None, "status": "running"}
+    task_record = {"task": None, "result": None, "error": None, "status": "running", "user_id": _user.id}
     request.app.state.active_tasks[thread_id] = task_record
 
     async def _run():
@@ -203,6 +203,16 @@ async def resolve_hitl(
                 "current_phase": "executing",
             },
         )
+
+        # Notify frontend that execution is resuming
+        ws_manager = getattr(request.app.state, "ws_manager", None)
+        if ws_manager:
+            await ws_manager.broadcast({
+                "type": "task.executing",
+                "thread_id": thread_id,
+                "task_id": "resume",
+                "persona": "system",
+            })
 
         task_record = request.app.state.active_tasks.get(thread_id, {})
 

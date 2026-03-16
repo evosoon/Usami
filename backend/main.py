@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from agents.boss import build_boss_graph
 from api.admin_routes import router as admin_router
 from api.auth_routes import router as auth_router
+from api.notification_routes import router as notification_router
 from api.routes import router as api_router
 from api.websocket import ConnectionManager
 from api.websocket import router as ws_router
@@ -26,6 +27,7 @@ from core.config import load_config
 from core.hitl import HiTLGateway
 from core.memory import init_database
 from core.persona_factory import PersonaFactory
+from core.push import init_push, send_push
 from core.tool_registry import ToolRegistry, init_tool_config
 from scheduler.cron import init_scheduler
 
@@ -44,6 +46,9 @@ async def lifespan(app: FastAPI):
 
     # 初始化 Auth 模块
     init_auth(config)
+
+    # 初始化 Push 通知模块
+    init_push(config)
 
     # Seed admin user
     await seed_admin_user()
@@ -106,8 +111,33 @@ async def lifespan(app: FastAPI):
         logger.warning("checkpoint_saver_skipped", error=str(e))
 
     async def ws_event_callback(event_type: str, data: dict) -> None:
-        """Boss Graph → WebSocket 事件回调"""
+        """Boss Graph → WebSocket 事件回调 + Push 通知"""
         await ws_manager.broadcast({"type": event_type, **data})
+
+        # Send browser push notifications for key events
+        thread_id = data.get("thread_id")
+        task_record = app.state.active_tasks.get(thread_id, {}) if thread_id else {}
+        user_id = task_record.get("user_id")
+        if user_id and event_type in ("task.completed", "task.failed", "hitl.request"):
+            push_titles = {
+                "task.completed": "任务完成",
+                "task.failed": "任务失败",
+                "hitl.request": "需要您的确认",
+            }
+            push_bodies = {
+                "task.completed": data.get("result", "")[:200] if data.get("result") else "任务已完成",
+                "task.failed": data.get("error", "任务执行失败"),
+                "hitl.request": "有一个任务需要您的人工审核",
+            }
+            try:
+                await send_push(
+                    user_id=user_id,
+                    title=push_titles[event_type],
+                    body=push_bodies[event_type],
+                    url=f"/tasks/{thread_id}" if thread_id else "/chat",
+                )
+            except Exception as e:
+                logger.warning("push_notification_failed", event=event_type, error=str(e))
 
     boss_graph = build_boss_graph(
         persona_factory=persona_factory,
@@ -164,6 +194,7 @@ app.add_middleware(
 # Routes
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
+app.include_router(notification_router, prefix="/api/v1")
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(ws_router, prefix="/ws")
 

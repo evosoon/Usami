@@ -32,9 +32,13 @@ _ensure-env:
 
 # --- Docker (full stack) ---
 
-# Start all services
+# Start all services (dev mode with hot-reload by default)
 up: _ensure-env
     docker compose up -d
+
+# Start all services in production mode (skip override)
+up-prod: _ensure-env
+    docker compose -f docker-compose.yml up -d
 
 # Stop all services
 down:

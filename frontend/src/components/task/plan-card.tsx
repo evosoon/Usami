@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,11 +13,13 @@ interface PlanCardProps {
 }
 
 export function PlanCard({ plan, threadId }: PlanCardProps) {
+  const t = useTranslations("task");
+
   return (
     <Card className="max-w-md">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm">
-          任务计划 — {plan.tasks.length} 个子任务
+          {t("planTitle", { count: plan.tasks.length })}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -31,7 +34,7 @@ export function PlanCard({ plan, threadId }: PlanCardProps) {
           ))}
           {plan.tasks.length > 5 && (
             <li className="text-xs text-muted-foreground">
-              +{plan.tasks.length - 5} 个更多任务
+              {t("moreTasks", { count: plan.tasks.length - 5 })}
             </li>
           )}
         </ul>
@@ -40,7 +43,7 @@ export function PlanCard({ plan, threadId }: PlanCardProps) {
           size="sm"
           render={<Link href={`/tasks/${threadId}`} />}
         >
-          查看详情
+          {t("viewDetail")}
         </Button>
       </CardContent>
     </Card>

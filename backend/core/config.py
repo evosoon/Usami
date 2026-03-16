@@ -45,6 +45,11 @@ class AppConfig:
     admin_email: str = ""
     admin_password: str = ""
 
+    # Push notifications
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+    vapid_mailto: str = ""
+
     # Personas
     personas: dict[str, Any] = field(default_factory=dict)
 
@@ -87,6 +92,9 @@ def load_config() -> AppConfig:
         refresh_token_expire_days=int(os.environ.get("REFRESH_TOKEN_EXPIRE_DAYS", "7")),
         admin_email=os.environ.get("ADMIN_EMAIL", ""),
         admin_password=os.environ.get("ADMIN_PASSWORD", ""),
+        vapid_public_key=os.environ.get("VAPID_PUBLIC_KEY", ""),
+        vapid_private_key=os.environ.get("VAPID_PRIVATE_KEY", ""),
+        vapid_mailto=os.environ.get("VAPID_MAILTO", "mailto:admin@usami.local"),
         personas=personas_cfg.get("personas", {}),
         tools=tools_cfg.get("builtin_tools", {}),
         mcp_servers=tools_cfg.get("mcp_servers", {}),

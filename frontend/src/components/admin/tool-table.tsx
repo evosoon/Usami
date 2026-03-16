@@ -1,3 +1,6 @@
+"use client";
+
+import { useTranslations } from "next-intl";
 import { Badge } from "@/components/ui/badge";
 import type { ToolInfo } from "@/types/api";
 
@@ -6,15 +9,17 @@ interface ToolTableProps {
 }
 
 export function ToolTable({ tools }: ToolTableProps) {
+  const t = useTranslations("admin");
+
   return (
     <div className="overflow-x-auto rounded-md border">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b bg-muted/50">
-            <th className="px-4 py-2 text-left font-medium">名称</th>
-            <th className="px-4 py-2 text-left font-medium">描述</th>
-            <th className="px-4 py-2 text-left font-medium">来源</th>
-            <th className="px-4 py-2 text-left font-medium">权限级别</th>
+            <th className="px-4 py-2 text-left font-medium">{t("name")}</th>
+            <th className="px-4 py-2 text-left font-medium">{t("description")}</th>
+            <th className="px-4 py-2 text-left font-medium">{t("source")}</th>
+            <th className="px-4 py-2 text-left font-medium">{t("permissionLevel")}</th>
           </tr>
         </thead>
         <tbody>

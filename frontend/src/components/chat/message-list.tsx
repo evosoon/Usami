@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { useTranslations } from "next-intl";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { MessageBubble } from "./message-bubble";
@@ -14,6 +15,7 @@ export function MessageList({ messages }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+  const t = useTranslations("chat");
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -32,7 +34,7 @@ export function MessageList({ messages }: MessageListProps) {
   if (messages.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center">
-        <p className="text-muted-foreground">输入你的需求，开始对话</p>
+        <p className="text-muted-foreground">{t("emptyState")}</p>
       </div>
     );
   }
@@ -58,7 +60,7 @@ export function MessageList({ messages }: MessageListProps) {
               bottomRef.current?.scrollIntoView({ behavior: "smooth" });
             }}
           >
-            回到底部
+            {t("scrollToBottom")}
           </Button>
         </div>
       )}

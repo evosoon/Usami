@@ -1,0 +1,17 @@
+FROM node:20-alpine
+
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+WORKDIR /app
+
+# Copy dependency files and install
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+# Copy config files needed at startup
+COPY tsconfig.json next.config.ts postcss.config.mjs ./
+COPY src/i18n ./src/i18n
+
+EXPOSE 3000
+
+CMD ["pnpm", "dev", "--hostname", "0.0.0.0"]

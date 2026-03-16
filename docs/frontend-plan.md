@@ -18,7 +18,7 @@
 
 ## 设计决策记录
 
-### Next.js 15 而非 Vite
+### Next.js 16 而非 Vite
 
 Usami 有三类页面需要服务端渲染能力，SPA 无法满足：
 
@@ -63,7 +63,7 @@ v1 原方案问题及修复：
 
 | 层 | 选择 | 理由 |
 |----|------|------|
-| 框架 | **Next.js 15** (App Router, `output: "standalone"`) | 首页 SSG + 分享页 SSR + middleware 路由守卫 |
+| 框架 | **Next.js 16** (App Router, `output: "standalone"`) | 首页 SSG + 分享页 SSR + middleware 路由守卫 |
 | UI 组件 | **shadcn/ui** (Tailwind CSS 4 + Radix) | 可定制，质量高，streamdown 原生兼容 |
 | 服务端状态 | **TanStack Query 5** | 缓存、去重、后台刷新；Admin 页面 + 分享页数据获取 |
 | 客户端状态 | **Zustand** | WS 连接管理 + 线程事件溯源 |

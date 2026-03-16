@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { useTranslations } from "next-intl";
 import type { Thread } from "@/stores/thread-store";
 
 export interface ChatMessage {
@@ -12,6 +13,8 @@ export interface ChatMessage {
 }
 
 export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
+  const t = useTranslations("chat");
+
   return useMemo(() => {
     if (!thread) return [];
 
@@ -35,7 +38,7 @@ export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
             id,
             role: "system",
             variant: "progress",
-            content: "正在分析意图，规划任务...",
+            content: t("analyzing"),
           });
           break;
 
@@ -44,7 +47,7 @@ export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
             id,
             role: "system",
             variant: "plan",
-            content: `计划就绪：${event.task_count} 个子任务`,
+            content: t("planReady", { count: event.task_count }),
             plan: thread.taskPlan,
           });
           break;
@@ -54,7 +57,7 @@ export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
             id,
             role: "system",
             variant: "progress",
-            content: `[${event.persona}] 正在执行...`,
+            content: t("executing", { persona: event.persona }),
           });
           break;
 
@@ -63,7 +66,7 @@ export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
             id,
             role: "system",
             variant: "status",
-            content: `[${event.persona}] ${event.status}`,
+            content: t("progress", { persona: event.persona, status: event.status }),
           });
           break;
 
@@ -72,7 +75,7 @@ export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
             id,
             role: "system",
             variant: "result",
-            content: thread.result ?? "任务完成",
+            content: thread.result ?? t("completed"),
           });
           break;
 
@@ -81,12 +84,33 @@ export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
             id,
             role: "system",
             variant: "error",
-            content: `任务失败: ${event.error}`,
+            content: t("failed", { error: event.error }),
+          });
+          break;
+
+        case "hitl.request":
+          messages.push({
+            id,
+            role: "system",
+            variant: "status",
+            content: t("hitlWaiting"),
           });
           break;
       }
     }
 
+    // Fallback: if thread has a result but no task.completed event in stream
+    // (e.g., WS event was missed, result came via REST polling)
+    const hasCompletedEvent = thread.events.some((e) => e.type === "task.completed");
+    if (thread.result && !hasCompletedEvent) {
+      messages.push({
+        id: `${thread.threadId}-result-fallback`,
+        role: "system",
+        variant: "result",
+        content: thread.result,
+      });
+    }
+
     return messages;
-  }, [thread]);
+  }, [thread, t]);
 }
