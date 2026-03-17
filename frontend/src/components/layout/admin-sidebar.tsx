@@ -43,7 +43,9 @@ export function AdminSidebar() {
     <Sidebar>
       <SidebarHeader>
         <Link href="/admin/dashboard" className="flex items-center gap-2 px-2 py-1">
-          <span className="text-lg font-bold">Usami Admin</span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.svg" alt="Usami" className="size-6" />
+          <span className="text-lg font-bold">USAMI Admin</span>
         </Link>
       </SidebarHeader>
       <SidebarContent>

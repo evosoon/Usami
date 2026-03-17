@@ -30,7 +30,9 @@ export function AppSidebar() {
     <Sidebar>
       <SidebarHeader>
         <Link href="/" className="flex items-center gap-2 px-2 py-1">
-          <span className="text-lg font-bold">Usami</span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.svg" alt="Usami" className="size-6" />
+          <span className="text-lg font-bold">USAMI</span>
         </Link>
       </SidebarHeader>
       <SidebarContent>
