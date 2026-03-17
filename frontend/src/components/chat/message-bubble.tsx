@@ -1,12 +1,12 @@
 "use client";
 
+import { useState, useEffect } from "react";
+import { useTranslations } from "next-intl";
 import { Streamdown } from "streamdown";
 import { code } from "@streamdown/code";
 import { cjk } from "@streamdown/cjk";
 import "streamdown/styles.css";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
+import { Check, ChevronDown, ChevronRight, Loader2, X } from "lucide-react";
 import type { ChatMessage } from "@/hooks/use-derived-messages";
 
 interface MessageBubbleProps {
@@ -23,43 +23,64 @@ function UserBubble({ content }: { content: string }) {
   );
 }
 
-function ProgressBubble({ content }: { content: string }) {
-  return (
-    <div className="flex justify-start">
-      <div className="flex items-center gap-2 rounded-2xl bg-muted px-4 py-2 text-muted-foreground">
-        <span className="inline-flex gap-1">
-          <span className="size-1.5 animate-pulse rounded-full bg-current" />
-          <span className="size-1.5 animate-pulse rounded-full bg-current [animation-delay:150ms]" />
-          <span className="size-1.5 animate-pulse rounded-full bg-current [animation-delay:300ms]" />
-        </span>
-        <span>{content}</span>
-      </div>
-    </div>
-  );
-}
+function ThinkingBubble({ message }: { message: ChatMessage }) {
+  const t = useTranslations("chat");
+  const steps = message.steps ?? [];
+  const allDone = steps.length > 0 && steps.every((s) => s.status !== "active");
+  const [collapsed, setCollapsed] = useState(false);
 
-function PlanBubble({ message }: { message: ChatMessage }) {
+  useEffect(() => {
+    if (allDone) setCollapsed(true);
+  }, [allDone]);
+
+  const stepCount = steps.length;
+
+  if (collapsed) {
+    return (
+      <div className="flex justify-start">
+        <button
+          onClick={() => setCollapsed(false)}
+          className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <ChevronRight className="size-3.5" />
+          <span>{t("thinkingSteps", { count: stepCount })}</span>
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex justify-start">
-      <Card className="max-w-[80%] min-w-64">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm">{message.content}</CardTitle>
-        </CardHeader>
-        {message.plan?.tasks && (
-          <CardContent>
-            <ul className="space-y-1">
-              {message.plan.tasks.map((task) => (
-                <li key={task.task_id} className="flex items-center gap-2 text-sm">
-                  <Badge variant="secondary" className="text-xs">
-                    {task.assigned_persona}
-                  </Badge>
-                  <span>{task.title}</span>
-                </li>
-              ))}
-            </ul>
-          </CardContent>
+      <div className="space-y-0.5">
+        {allDone && (
+          <button
+            onClick={() => setCollapsed(true)}
+            className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground mb-1"
+          >
+            <ChevronDown className="size-3.5" />
+            <span>{t("thinkingSteps", { count: stepCount })}</span>
+          </button>
         )}
-      </Card>
+        {steps.map((step) => (
+          <div
+            key={step.id}
+            className="flex items-center gap-2 px-2 text-sm text-muted-foreground"
+          >
+            {step.status === "done" && (
+              <Check className="size-3.5 shrink-0 text-green-500" />
+            )}
+            {step.status === "active" && (
+              <Loader2 className="size-3.5 shrink-0 animate-spin" />
+            )}
+            {step.status === "error" && (
+              <X className="size-3.5 shrink-0 text-destructive" />
+            )}
+            <span className={step.status === "error" ? "text-destructive" : ""}>
+              {step.label}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -92,33 +113,19 @@ function ErrorBubble({ content }: { content: string }) {
   );
 }
 
-function StatusBubble({ content }: { content: string }) {
-  return (
-    <div className="flex justify-start">
-      <div className="rounded-2xl bg-muted px-4 py-2 text-sm text-muted-foreground">
-        <p>{content}</p>
-      </div>
-    </div>
-  );
-}
-
 export function MessageBubble({ message }: MessageBubbleProps) {
   if (message.role === "user") {
     return <UserBubble content={message.content} />;
   }
 
   switch (message.variant) {
-    case "progress":
-      return <ProgressBubble content={message.content} />;
-    case "plan":
-      return <PlanBubble message={message} />;
+    case "thinking":
+      return <ThinkingBubble message={message} />;
     case "result":
       return <ResultBubble content={message.content} isStreaming={message.isStreaming} />;
     case "error":
       return <ErrorBubble content={message.content} />;
-    case "status":
-      return <StatusBubble content={message.content} />;
     default:
-      return <StatusBubble content={message.content} />;
+      return <ResultBubble content={message.content} />;
   }
 }
