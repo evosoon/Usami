@@ -117,6 +117,11 @@ export const api = {
       `/api/v1/threads/${encodeURIComponent(threadId)}/events?after_seq=${afterSeq}`,
     ),
 
+  deleteThread: (threadId: string) =>
+    request<{ status: string }>(`/api/v1/threads/${encodeURIComponent(threadId)}`, {
+      method: "DELETE",
+    }),
+
   getPersonas: () => request<PersonasMap>("/api/v1/personas"),
   getTools: () => request<ToolInfo[]>("/api/v1/tools"),
   getJobs: () => request<SchedulerJob[]>("/api/v1/scheduler/jobs"),

@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from core.auth import get_current_user
-from core.event_store import get_thread_events, list_user_threads, persist_event
+from core.event_store import delete_thread, get_thread_events, list_user_threads, persist_event
 from core.state import UserProfile
 
 logger = structlog.get_logger()
@@ -330,6 +330,28 @@ async def get_thread_events_api(
     """Replay all events for a thread (for history loading)."""
     events = await get_thread_events(thread_id, after_seq=after_seq)
     return [e.model_dump() for e in events]
+
+
+@router.delete("/threads/{thread_id}")
+async def delete_thread_api(
+    thread_id: str,
+    request: Request,
+    _user: UserProfile = Depends(get_current_user),
+):
+    """删除对话及其所有事件"""
+    # Cancel running task if any
+    task_record = request.app.state.active_tasks.get(thread_id)
+    if task_record and isinstance(task_record, dict):
+        task = task_record.get("task")
+        if task and not task.done():
+            task.cancel()
+        request.app.state.active_tasks.pop(thread_id, None)
+
+    deleted = await delete_thread(thread_id, _user.id)
+    if deleted == 0:
+        raise HTTPException(status_code=404, detail="对话不存在")
+    logger.info("thread_deleted", thread_id=thread_id, user_id=_user.id)
+    return {"status": "deleted"}
 
 
 # ============================================

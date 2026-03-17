@@ -5,12 +5,14 @@ Single source of truth for all task state and history.
 """
 from __future__ import annotations
 
+import contextlib
 import uuid
 
 import structlog
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select, text
 
-from core.memory import Event, get_session
+from core.memory import Event, TaskLog, get_session
 from core.state import PersistedEvent
 
 logger = structlog.get_logger()
@@ -165,5 +167,47 @@ async def list_user_threads(
             }
             for row in rows
         ]
+    finally:
+        await session.close()
+
+
+async def delete_thread(thread_id: str, user_id: str) -> int:
+    """Delete all data for a thread. Returns deleted event count. Checks ownership via user_id."""
+    session = get_session()
+    try:
+        # Verify ownership: at least one event belongs to this user
+        result = await session.execute(
+            select(func.count()).select_from(Event).where(
+                Event.thread_id == thread_id, Event.user_id == user_id
+            )
+        )
+        if result.scalar_one() == 0:
+            return 0
+
+        # Delete events
+        result = await session.execute(
+            sa_delete(Event).where(Event.thread_id == thread_id)
+        )
+        deleted_count = result.rowcount
+
+        # Delete task_logs
+        await session.execute(
+            sa_delete(TaskLog).where(TaskLog.thread_id == thread_id)
+        )
+
+        # Delete LangGraph checkpoint tables (may not exist in all environments)
+        for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
+            with contextlib.suppress(Exception):
+                await session.execute(
+                    text(f"DELETE FROM {table} WHERE thread_id = :tid"),
+                    {"tid": thread_id},
+                )
+
+        await session.commit()
+        logger.info("thread_deleted", thread_id=thread_id, deleted_events=deleted_count)
+        return deleted_count
+    except Exception:
+        await session.rollback()
+        raise
     finally:
         await session.close()
