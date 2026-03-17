@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 554 492" width="554" height="492">
+  <polygon points="277,49 50,442 504,442" fill="none" stroke="#000" stroke-width="14" stroke-linejoin="miter"/>
+  <line x1="277" y1="49" x2="277" y2="269" stroke="#000" stroke-width="8"/>
+  <line x1="50" y1="442" x2="277" y2="269" stroke="#000" stroke-width="8"/>
+  <line x1="504" y1="442" x2="277" y2="269" stroke="#000" stroke-width="8"/>
+  <path d="M 277,217 C 285,257 285,257 329,269 C 285,281 285,281 277,321 C 269,281 269,281 225,269 C 269,257 269,257 277,217 Z" fill="#000" stroke="none"/>
+</svg>
