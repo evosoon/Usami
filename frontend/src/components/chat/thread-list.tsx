@@ -15,6 +15,7 @@ const PHASE_BADGE_VARIANT: Record<Phase, "default" | "secondary" | "destructive"
   planned: "secondary",
   executing: "default",
   hitl_waiting: "default",
+  aggregating: "default",
   completed: "secondary",
   failed: "destructive",
 };
