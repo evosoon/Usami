@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -230,6 +231,33 @@ class ModelRouter:
             base_delay=self._base_delay,
             circuit_breaker=self._circuit_breaker,
         )
+
+    async def astream_with_retry(
+        self, model: ChatOpenAI, messages: list
+    ) -> AsyncIterator:
+        """带重试 + 断路器的流式模型调用，yield AIMessageChunk"""
+        last_error = None
+        for attempt in range(self._max_retries + 1):
+            if not self._circuit_breaker.can_execute():
+                raise RuntimeError("LiteLLM 断路器已打开，暂停调用")
+            try:
+                async for chunk in model.astream(messages):
+                    yield chunk
+                self._circuit_breaker.record_success()
+                return
+            except Exception as e:
+                last_error = e
+                self._circuit_breaker.record_failure()
+                if attempt < self._max_retries:
+                    delay = min(self._base_delay * (2 ** attempt), 30.0)
+                    logger.warning(
+                        "litellm_stream_retry",
+                        attempt=attempt + 1,
+                        delay=delay,
+                        error=str(e),
+                    )
+                    await asyncio.sleep(delay)
+        raise last_error  # type: ignore[misc]
 
     def get_routing_log(self) -> list[RoutingDecision]:
         """获取路由日志（为未来智能路由提供数据）"""

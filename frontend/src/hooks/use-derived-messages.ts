@@ -10,6 +10,7 @@ export interface ChatMessage {
   variant?: "progress" | "plan" | "result" | "error" | "status";
   content: string;
   plan?: Thread["taskPlan"];
+  isStreaming?: boolean;
 }
 
 export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
@@ -33,6 +34,17 @@ export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
       const id = `${thread.threadId}-${i}`;
 
       switch (event.type) {
+        case "task.created":
+          // Follow-up: render subsequent task.created events as user messages
+          if (event.intent && event.intent !== thread.intent) {
+            messages.push({
+              id,
+              role: "user",
+              content: event.intent,
+            });
+          }
+          break;
+
         case "task.planning":
           messages.push({
             id,
@@ -70,6 +82,15 @@ export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
           });
           break;
 
+        case "task.aggregating":
+          messages.push({
+            id,
+            role: "system",
+            variant: "progress",
+            content: t("aggregating"),
+          });
+          break;
+
         case "task.completed":
           messages.push({
             id,
@@ -100,7 +121,6 @@ export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
     }
 
     // Fallback: if thread has a result but no task.completed event in stream
-    // (e.g., WS event was missed, result came via REST polling)
     const hasCompletedEvent = thread.events.some((e) => e.type === "task.completed");
     if (thread.result && !hasCompletedEvent) {
       messages.push({
@@ -108,6 +128,28 @@ export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
         role: "system",
         variant: "result",
         content: thread.result,
+      });
+    }
+
+    // Streaming planning: show accumulated planning chunks during planning phase
+    if (thread.streamingPlanning && thread.phase === "planning") {
+      messages.push({
+        id: `${thread.threadId}-streaming-planning`,
+        role: "system",
+        variant: "progress",
+        content: thread.streamingPlanning,
+        isStreaming: true,
+      });
+    }
+
+    // Streaming result: show accumulated chunks while aggregation is in progress
+    if (thread.streamingResult && thread.phase === "aggregating") {
+      messages.push({
+        id: `${thread.threadId}-streaming`,
+        role: "system",
+        variant: "result",
+        content: thread.streamingResult,
+        isStreaming: true,
       });
     }
 

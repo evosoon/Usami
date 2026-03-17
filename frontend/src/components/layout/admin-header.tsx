@@ -2,13 +2,13 @@
 
 import { useTranslations } from "next-intl";
 import { Badge } from "@/components/ui/badge";
-import { useWsStore } from "@/stores/ws-store";
+import { useSseStore } from "@/stores/sse-store";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { NotificationCenter } from "@/components/layout/notification-center";
 
 export function AdminHeader() {
-  const status = useWsStore((s) => s.status);
-  const t = useTranslations("ws");
+  const status = useSseStore((s) => s.status);
+  const t = useTranslations("connection");
   const ta = useTranslations("admin");
 
   const statusMap: Record<string, { label: string; variant: "default" | "secondary" | "destructive" }> = {

@@ -13,7 +13,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const setAuth = useAuthStore((s) => s.setAuth);
+  const setUser = useAuthStore((s) => s.setUser);
   const router = useRouter();
   const t = useTranslations("auth");
 
@@ -26,6 +26,7 @@ export default function LoginPage() {
       const res = await fetch("/api/v1/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ email, password }),
       });
 
@@ -35,7 +36,7 @@ export default function LoginPage() {
       }
 
       const data = await res.json();
-      setAuth(data.user, data.access_token);
+      setUser(data.user);
       router.push("/chat");
     } catch (err) {
       setError(err instanceof Error ? err.message : t("loginFailed"));

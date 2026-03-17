@@ -7,6 +7,7 @@ FastAPI 入口文件
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -20,10 +21,11 @@ from api.admin_routes import router as admin_router
 from api.auth_routes import router as auth_router
 from api.notification_routes import router as notification_router
 from api.routes import router as api_router
-from api.websocket import ConnectionManager
-from api.websocket import router as ws_router
+from api.sse import SSEConnectionManager
+from api.sse import router as sse_router
 from core.auth import init_auth, seed_admin_user
 from core.config import load_config
+from core.event_store import persist_event
 from core.hitl import HiTLGateway
 from core.memory import init_database
 from core.persona_factory import PersonaFactory
@@ -94,31 +96,45 @@ async def lifespan(app: FastAPI):
     )
     app.state.hitl_gateway = hitl_gateway
 
-    # 初始化 WebSocket 连接管理器 (在 boss_graph 之前, 用于回调)
-    ws_manager = ConnectionManager()
-    app.state.ws_manager = ws_manager
+    # 初始化 SSE 连接管理器 (在 boss_graph 之前, 用于回调)
+    sse_manager = SSEConnectionManager()
+    app.state.sse_manager = sse_manager
 
-    # 构建 Boss Graph（带 Checkpoint 持久化 + WebSocket 事件回调）
+    # 构建 Boss Graph（带 Checkpoint 持久化 + SSE 事件回调）
     checkpointer = None
     try:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
         checkpointer_cm = AsyncPostgresSaver.from_conn_string(config.database_url)
         checkpointer = await checkpointer_cm.__aenter__()
         await checkpointer.setup()
-        app.state.checkpointer_cm = checkpointer_cm  # 保存 context manager 用于 cleanup
+        app.state.checkpointer_cm = checkpointer_cm
         logger.info("checkpoint_saver_initialized")
     except Exception as e:
         logger.warning("checkpoint_saver_skipped", error=str(e))
 
-    async def ws_event_callback(event_type: str, data: dict) -> None:
-        """Boss Graph → WebSocket 事件回调 + Push 通知"""
-        await ws_manager.broadcast({"type": event_type, **data})
+    async def sse_event_callback(event_type: str, data: dict) -> None:
+        """Boss Graph → persist event → push to SSE connections + Push notifications"""
+        thread_id = data.get("thread_id", "")
+
+        # Look up user_id from active_tasks
+        task_record = app.state.active_tasks.get(thread_id, {})
+        user_id = task_record.get("user_id") if isinstance(task_record, dict) else None
+        if not user_id:
+            logger.warning("event_no_user", event_type=event_type, thread_id=thread_id)
+            return
+
+        # Persist to DB
+        try:
+            persisted = await persist_event(thread_id, user_id, event_type, data)
+        except Exception as e:
+            logger.error("event_persist_failed", event_type=event_type, error=str(e))
+            return
+
+        # Route to user's SSE connections
+        await sse_manager.send_to_user(user_id, persisted)
 
         # Send browser push notifications for key events
-        thread_id = data.get("thread_id")
-        task_record = app.state.active_tasks.get(thread_id, {}) if thread_id else {}
-        user_id = task_record.get("user_id")
-        if user_id and event_type in ("task.completed", "task.failed", "hitl.request"):
+        if event_type in ("task.completed", "task.failed", "hitl.request"):
             push_titles = {
                 "task.completed": "任务完成",
                 "task.failed": "任务失败",
@@ -143,11 +159,11 @@ async def lifespan(app: FastAPI):
         persona_factory=persona_factory,
         hitl_gateway=hitl_gateway,
         checkpointer=checkpointer,
-        on_event=ws_event_callback,
+        on_event=sse_event_callback,
     )
     app.state.boss_graph = boss_graph
 
-    # 活跃任务追踪 (thread_id → {task, result, error, status})
+    # 活跃任务追踪 (thread_id → {user_id, task})
     app.state.active_tasks: dict[str, Any] = {}
 
     # 初始化定时调度器
@@ -183,9 +199,10 @@ app = FastAPI(
 )
 
 # CORS
+_cors_origins = os.environ.get("CORS_ORIGINS", "http://localhost:42000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -196,7 +213,7 @@ app.include_router(auth_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
 app.include_router(notification_router, prefix="/api/v1")
 app.include_router(api_router, prefix="/api/v1")
-app.include_router(ws_router, prefix="/ws")
+app.include_router(sse_router, prefix="/api/v1")
 
 
 @app.get("/health")
@@ -227,5 +244,10 @@ async def health(request: Request):
     # Redis 状态
     redis_client = getattr(request.app.state, "redis_client", None)
     checks["redis"] = "ok" if redis_client else "unavailable"
+
+    # SSE 连接数
+    sse_manager = getattr(request.app.state, "sse_manager", None)
+    if sse_manager:
+        checks["sse_connections"] = sse_manager.active_connections
 
     return checks

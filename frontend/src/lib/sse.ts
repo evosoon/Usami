@@ -1,13 +1,13 @@
 "use client";
 
-import type { WsServerEvent, WsClientEvent } from "@/types/ws";
+import { SSE_EVENT_TYPES } from "@/types/sse";
+import type { SseEvent } from "@/types/sse";
 
-type EventHandler = (event: WsServerEvent) => void;
+type EventHandler = (event: SseEvent) => void;
 type StatusHandler = (status: "connecting" | "connected" | "disconnected") => void;
 
-export class UsamiWebSocket {
-  private ws: WebSocket | null = null;
-  private clientId: string;
+export class UsamiSSE {
+  private es: EventSource | null = null;
   private baseUrl: string;
   private handlers = new Set<EventHandler>();
   private statusHandlers = new Set<StatusHandler>();
@@ -15,59 +15,59 @@ export class UsamiWebSocket {
   private maxReconnectDelay = 30000;
   private shouldReconnect = true;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private getToken: (() => string | null) | null = null;
+  private lastEventId: string | null = null;
 
-  constructor(url: string, getToken?: () => string | null) {
-    let id = sessionStorage.getItem("usami_client_id");
-    if (!id) {
-      id = `client_${crypto.randomUUID().slice(0, 12)}`;
-      sessionStorage.setItem("usami_client_id", id);
-    }
-    this.clientId = id;
-    this.baseUrl = `${url}/${this.clientId}`;
-    this.getToken = getToken ?? null;
-  }
-
-  private buildUrl(): string {
-    const token = this.getToken?.();
-    if (token) {
-      return `${this.baseUrl}?token=${encodeURIComponent(token)}`;
-    }
-    return this.baseUrl;
+  constructor(url: string) {
+    this.baseUrl = url;
   }
 
   connect(): void {
     this.shouldReconnect = true;
     this.notifyStatus("connecting");
 
-    const ws = new WebSocket(this.buildUrl());
+    // Build URL with last_event_id for replay on reconnect
+    let url = this.baseUrl;
+    if (this.lastEventId) {
+      const sep = url.includes("?") ? "&" : "?";
+      url = `${url}${sep}last_event_id=${encodeURIComponent(this.lastEventId)}`;
+    }
 
-    ws.onopen = () => {
+    const es = new EventSource(url, { withCredentials: true });
+
+    es.onopen = () => {
       this.reconnectDelay = 1000;
       this.notifyStatus("connected");
     };
 
-    ws.onmessage = (e) => {
-      try {
-        const event = JSON.parse(e.data) as WsServerEvent;
-        this.handlers.forEach((h) => h(event));
-      } catch {
-        // Ignore malformed messages
-      }
-    };
-
-    ws.onclose = () => {
+    es.onerror = () => {
+      // EventSource fires error on both connection failure and stream end.
+      // Close and reconnect manually for better control over backoff.
+      es.close();
+      this.es = null;
       this.notifyStatus("disconnected");
       if (this.shouldReconnect) {
         this.scheduleReconnect();
       }
     };
 
-    ws.onerror = () => {
-      ws.close();
-    };
+    // Listen to all known named SSE event types
+    for (const eventType of SSE_EVENT_TYPES) {
+      es.addEventListener(eventType, (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data);
+          // Store last event ID for replay
+          if (e.lastEventId) {
+            this.lastEventId = e.lastEventId;
+          }
+          const event: SseEvent = { type: eventType, ...data };
+          this.handlers.forEach((h) => h(event));
+        } catch {
+          // Ignore malformed messages
+        }
+      });
+    }
 
-    this.ws = ws;
+    this.es = es;
   }
 
   disconnect(): void {
@@ -76,15 +76,9 @@ export class UsamiWebSocket {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    this.ws?.close();
-    this.ws = null;
+    this.es?.close();
+    this.es = null;
     this.notifyStatus("disconnected");
-  }
-
-  send(event: WsClientEvent): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(event));
-    }
   }
 
   onEvent(handler: EventHandler): () => void {
@@ -95,10 +89,6 @@ export class UsamiWebSocket {
   onStatus(handler: StatusHandler): () => void {
     this.statusHandlers.add(handler);
     return () => this.statusHandlers.delete(handler);
-  }
-
-  getClientId(): string {
-    return this.clientId;
   }
 
   private notifyStatus(status: "connecting" | "connected" | "disconnected"): void {

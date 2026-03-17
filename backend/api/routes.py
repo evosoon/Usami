@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from core.auth import get_current_user
+from core.event_store import get_thread_events, list_user_threads, persist_event
 from core.state import UserProfile
 
 logger = structlog.get_logger()
@@ -26,6 +27,7 @@ class TaskRequest(BaseModel):
     """用户任务请求"""
     intent: str
     config: dict = {}
+    thread_id: str | None = None  # follow-up: reuse existing thread
 
 
 class TaskResponse(BaseModel):
@@ -44,6 +46,19 @@ class HiTLResolveRequest(BaseModel):
 
 
 # ============================================
+# Helpers
+# ============================================
+
+async def _get_thread_last_result(thread_id: str) -> str | None:
+    """Load the last task.completed result from event store (for follow-ups)."""
+    events = await get_thread_events(thread_id)
+    for evt in reversed(events):
+        if evt.event_type == "task.completed":
+            return evt.payload.get("result")
+    return None
+
+
+# ============================================
 # Routes
 # ============================================
 
@@ -53,40 +68,59 @@ async def create_task(req: TaskRequest, request: Request, _user: UserProfile = D
     创建新任务
     用户意图 → Boss 分解 → Persona 执行 → 交付结果
     """
-    thread_id = f"thread_{uuid.uuid4().hex[:12]}"
+    # Follow-up: reuse thread_id, load previous result for context
+    if req.thread_id:
+        thread_id = req.thread_id
+        previous_result = await _get_thread_last_result(thread_id)
+    else:
+        thread_id = f"thread_{uuid.uuid4().hex[:12]}"
+        previous_result = None
+
     boss_graph = request.app.state.boss_graph
 
-    # 内存级任务追踪: 存储 asyncio.Task + 执行结果 (checkpointer 不可用时的 fallback)
-    task_record = {"task": None, "result": None, "error": None, "status": "running", "user_id": _user.id}
+    # 内存级任务追踪: 存储 asyncio.Task + user_id (用于 SSE 路由)
+    task_record = {"task": None, "user_id": _user.id}
     request.app.state.active_tasks[thread_id] = task_record
 
     async def _run():
         try:
             config = {"configurable": {"thread_id": thread_id}}
-            final_state = await boss_graph.ainvoke(
-                {"user_intent": req.intent, "current_phase": "init", "thread_id": thread_id},
-                config=config,
+            initial_state = {
+                "user_intent": req.intent,
+                "current_phase": "init",
+                "thread_id": thread_id,
+            }
+            if previous_result:
+                initial_state["previous_result"] = previous_result
+            await asyncio.wait_for(
+                boss_graph.ainvoke(initial_state, config=config),
+                timeout=600,  # 10 minutes
             )
-            task_record["result"] = final_state
-            task_record["status"] = "done"
             logger.info("task_completed", thread_id=thread_id)
+        except asyncio.TimeoutError:
+            logger.error("task_timeout", thread_id=thread_id)
+            sse_manager = getattr(request.app.state, "sse_manager", None)
+            if sse_manager:
+                persisted = await persist_event(
+                    thread_id, _user.id, "task.failed",
+                    {"thread_id": thread_id, "task_id": "timeout", "error": "任务执行超时（10分钟）"},
+                )
+                await sse_manager.send_to_user(_user.id, persisted)
         except Exception as e:
-            task_record["error"] = str(e)
-            task_record["status"] = "error"
             logger.error("task_execution_failed", thread_id=thread_id, error=str(e))
 
     # 异步执行: 不阻塞 HTTP 响应
     task = asyncio.create_task(_run())
     task_record["task"] = task
 
-    # 广播 task.created 事件
-    ws_manager = getattr(request.app.state, "ws_manager", None)
-    if ws_manager:
-        await ws_manager.broadcast({
-            "type": "task.created",
-            "thread_id": thread_id,
-            "intent": req.intent,
-        })
+    # Persist + broadcast task.created event
+    sse_manager = getattr(request.app.state, "sse_manager", None)
+    if sse_manager:
+        persisted = await persist_event(
+            thread_id, _user.id, "task.created",
+            {"thread_id": thread_id, "intent": req.intent},
+        )
+        await sse_manager.send_to_user(_user.id, persisted)
 
     return TaskResponse(
         thread_id=thread_id,
@@ -96,43 +130,58 @@ async def create_task(req: TaskRequest, request: Request, _user: UserProfile = D
 
 @router.get("/tasks/{thread_id}")
 async def get_task_status(thread_id: str, request: Request, _user: UserProfile = Depends(get_current_user)):
-    """获取任务执行状态 — 优先 Checkpoint，fallback 内存追踪"""
-    boss_graph = request.app.state.boss_graph
+    """获取任务执行状态 — 从事件表派生"""
+    events = await get_thread_events(thread_id)
+    if not events:
+        # Fallback: try LangGraph Checkpoint
+        boss_graph = request.app.state.boss_graph
+        config = {"configurable": {"thread_id": thread_id}}
+        try:
+            state = await boss_graph.aget_state(config)
+            if state is not None and state.values:
+                return _format_state_response(thread_id, state.values)
+        except Exception as e:
+            logger.debug("checkpoint_read_failed", thread_id=thread_id, error=str(e))
 
-    # 优先尝试 LangGraph Checkpoint
-    config = {"configurable": {"thread_id": thread_id}}
-    try:
-        state = await boss_graph.aget_state(config)
-        if state is not None and state.values:
-            return _format_state_response(thread_id, state.values)
-    except Exception as e:
-        logger.debug("checkpoint_read_failed", thread_id=thread_id, error=str(e))
-
-    # Fallback: 内存级任务追踪
-    task_record = request.app.state.active_tasks.get(thread_id)
-    if task_record is None:
         raise HTTPException(status_code=404, detail=f"任务不存在: {thread_id}")
 
-    if task_record["error"]:
-        return {
-            "thread_id": thread_id,
-            "status": "error",
-            "task_plan": None,
-            "result": None,
-            "error": task_record["error"],
-            "hitl_pending": [],
-        }
+    # Derive state from events
+    phase = "created"
+    result = None
+    task_plan = None
+    error = None
+    hitl_pending = []
 
-    if task_record["result"]:
-        return _format_state_response(thread_id, task_record["result"])
+    event_to_phase = {
+        "task.created": "created",
+        "task.planning": "planning",
+        "task.plan_ready": "planned",
+        "task.executing": "executing",
+        "task.progress": "executing",
+        "task.aggregating": "aggregating",
+        "task.completed": "completed",
+        "task.failed": "failed",
+        "hitl.request": "hitl_waiting",
+    }
 
-    # 任务仍在执行中
+    for evt in events:
+        phase = event_to_phase.get(evt.event_type, phase)
+        if evt.event_type == "task.completed":
+            result = evt.payload.get("result")
+        elif evt.event_type == "task.failed":
+            error = evt.payload.get("error")
+        elif evt.event_type == "task.plan_ready":
+            task_plan = evt.payload.get("plan")
+        elif evt.event_type == "hitl.request":
+            hitl_pending.append(evt.payload.get("request", {}))
+
     return {
         "thread_id": thread_id,
-        "status": "running",
-        "task_plan": None,
-        "result": None,
-        "hitl_pending": [],
+        "status": phase,
+        "task_plan": task_plan,
+        "result": result,
+        "error": error,
+        "hitl_pending": hitl_pending,
     }
 
 
@@ -204,29 +253,22 @@ async def resolve_hitl(
             },
         )
 
-        # Notify frontend that execution is resuming
-        ws_manager = getattr(request.app.state, "ws_manager", None)
-        if ws_manager:
-            await ws_manager.broadcast({
-                "type": "task.executing",
-                "thread_id": thread_id,
-                "task_id": "resume",
-                "persona": "system",
-            })
+        # Notify via SSE that execution is resuming
+        sse_manager = getattr(request.app.state, "sse_manager", None)
+        if sse_manager:
+            persisted = await persist_event(
+                thread_id, _user.id, "task.executing",
+                {"thread_id": thread_id, "task_id": "resume", "persona": "system"},
+            )
+            await sse_manager.send_to_user(_user.id, persisted)
 
         task_record = request.app.state.active_tasks.get(thread_id, {})
 
         async def _resume():
             try:
-                final_state = await boss_graph.ainvoke(None, config=config)
-                if isinstance(task_record, dict):
-                    task_record["result"] = final_state
-                    task_record["status"] = "done"
+                await boss_graph.ainvoke(None, config=config)
             except Exception as e:
                 logger.error("hitl_resume_failed", thread_id=thread_id, error=str(e))
-                if isinstance(task_record, dict):
-                    task_record["error"] = str(e)
-                    task_record["status"] = "error"
 
         task = asyncio.create_task(_resume())
         if isinstance(task_record, dict):
@@ -236,6 +278,63 @@ async def resolve_hitl(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
+
+@router.post("/tasks/{thread_id}/cancel")
+async def cancel_task(
+    thread_id: str,
+    request: Request,
+    _user: UserProfile = Depends(get_current_user),
+):
+    """Cancel a running task."""
+    task_record = request.app.state.active_tasks.get(thread_id)
+    if not task_record or not isinstance(task_record, dict):
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    task = task_record.get("task")
+    if task and not task.done():
+        task.cancel()
+        logger.info("task_cancelled", thread_id=thread_id)
+
+        # Persist cancellation event
+        sse_manager = getattr(request.app.state, "sse_manager", None)
+        if sse_manager:
+            persisted = await persist_event(
+                thread_id, _user.id, "task.failed",
+                {"thread_id": thread_id, "task_id": "cancel", "error": "任务已被用户取消"},
+            )
+            await sse_manager.send_to_user(_user.id, persisted)
+
+        return {"status": "cancelled"}
+
+    return {"status": "already_done"}
+
+
+# ============================================
+# Thread History Endpoints
+# ============================================
+
+@router.get("/threads")
+async def list_threads(request: Request, user: UserProfile = Depends(get_current_user)):
+    """List user's threads (from events table)."""
+    threads = await list_user_threads(user.id)
+    return threads
+
+
+@router.get("/threads/{thread_id}/events")
+async def get_thread_events_api(
+    thread_id: str,
+    request: Request,
+    user: UserProfile = Depends(get_current_user),
+    after_seq: int = 0,
+):
+    """Replay all events for a thread (for history loading)."""
+    events = await get_thread_events(thread_id, after_seq=after_seq)
+    return [e.model_dump() for e in events]
+
+
+# ============================================
+# Admin / Info Endpoints
+# ============================================
 
 @router.get("/personas")
 async def list_personas(request: Request, _user: UserProfile = Depends(get_current_user)):

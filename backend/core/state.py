@@ -160,3 +160,18 @@ class UserProfile(BaseModel):
     display_name: str
     role: UserRole
     is_active: bool
+
+
+# ============================================
+# Event Persistence Schema
+# ============================================
+
+class PersistedEvent(BaseModel):
+    """Event as stored in DB and sent via SSE"""
+    id: str
+    thread_id: str
+    user_id: str
+    seq: int
+    event_type: str
+    payload: dict[str, Any] = {}
+    created_at: str = ""

@@ -3,7 +3,7 @@ services:
   backend:
     build: ./backend
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      - "127.0.0.1:${BACKEND_PORT:-42001}:8000"
     env_file:
       - .env.example
       - .env
@@ -26,8 +26,9 @@ services:
       context: ./frontend
       args:
         - BACKEND_INTERNAL_URL=http://backend:8000
+        - NEXT_PUBLIC_BACKEND_PORT=${BACKEND_PORT:-42001}
     ports:
-      - "${FRONTEND_PORT:-3000}:3000"
+      - "127.0.0.1:${FRONTEND_PORT:-42000}:3000"
     depends_on:
       - backend
 
@@ -38,8 +39,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-usami}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-usami}
       POSTGRES_DB: ${POSTGRES_DB:-usami}
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+    # ports:  # 默认不暴露，需要本地 DB 工具连接时取消注释
+    #   - "127.0.0.1:${POSTGRES_PORT:-42432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -51,8 +52,8 @@ services:
   # === Redis (工作记忆 + 事件总线) ===
   redis:
     image: redis:7-alpine
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
+    # ports:  # 默认不暴露，需要本地 redis-cli 连接时取消注释
+    #   - "127.0.0.1:${REDIS_PORT:-42379}:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -65,7 +66,7 @@ services:
   litellm:
     image: ghcr.io/berriai/litellm:main-latest
     ports:
-      - "${LITELLM_PORT:-4000}:4000"
+      - "127.0.0.1:${LITELLM_PORT:-42002}:4000"
     volumes:
       - ./config/litellm_config.yaml:/app/config.yaml
     command: --config /app/config.yaml --port 4000
@@ -85,7 +86,7 @@ services:
     environment:
       - SEARXNG_BASE_URL=http://localhost:8080
     ports:
-      - "${SEARXNG_PORT:-8080}:8080"
+      - "127.0.0.1:${SEARXNG_PORT:-42080}:8080"
     volumes:
       - ./config/searxng:/etc/searxng
     healthcheck:

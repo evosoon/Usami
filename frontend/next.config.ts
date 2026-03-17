@@ -3,7 +3,7 @@ import createNextIntlPlugin from "next-intl/plugin";
 
 const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 
-const BACKEND_URL = process.env.BACKEND_INTERNAL_URL || "http://localhost:8000";
+const BACKEND_URL = process.env.BACKEND_INTERNAL_URL || "http://localhost:42001";
 
 const nextConfig: NextConfig = {
   output: "standalone",

@@ -14,6 +14,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Server-side rewrites destination is inlined at build time
 ARG BACKEND_INTERNAL_URL=http://localhost:8000
 ENV BACKEND_INTERNAL_URL=$BACKEND_INTERNAL_URL
+# WS direct connection port (browser → backend, bypasses Next.js)
+ARG NEXT_PUBLIC_BACKEND_PORT=42001
+ENV NEXT_PUBLIC_BACKEND_PORT=$NEXT_PUBLIC_BACKEND_PORT
 RUN pnpm build
 
 FROM node:20-alpine AS runner

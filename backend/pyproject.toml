@@ -7,7 +7,6 @@ dependencies = [
     # Core
     "fastapi==0.115.*",
     "uvicorn[standard]==0.34.*",
-    "websockets==14.*",
     "pydantic==2.*",
     "pyyaml==6.*",
     "python-dotenv==1.*",

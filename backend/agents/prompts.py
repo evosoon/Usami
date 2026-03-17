@@ -113,6 +113,18 @@ FINAL_REPORT_SUMMARY = "Final report generated"
 # Error summary for failed task execution
 TASK_EXECUTION_FAILED_SUMMARY = "Execution failed: {error}"
 
+# Previous conversation result (appended to planning prompt for follow-ups)
+# Variables: previous_result
+FOLLOW_UP_CONTEXT = """
+
+Previous conversation result:
+---
+{previous_result}
+---
+
+The user is asking a follow-up question based on the above result.
+"""
+
 
 # ============================================
 # User-facing HiTL Strings (Chinese per language rules)

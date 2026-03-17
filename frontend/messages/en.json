@@ -28,6 +28,7 @@
     "planReady": "Plan ready: {count} subtasks",
     "executing": "[{persona}] Executing...",
     "progress": "[{persona}] {status}",
+    "aggregating": "Synthesizing results...",
     "completed": "Task completed",
     "failed": "Task failed: {error}",
     "hitlWaiting": "Waiting for your confirmation...",
@@ -43,6 +44,7 @@
     "planning": "Planning",
     "planned": "Plan Ready",
     "executing": "Executing",
+    "aggregating": "Aggregating",
     "hitl_waiting": "Awaiting Confirmation",
     "completed": "Completed",
     "failed": "Failed"
@@ -108,10 +110,10 @@
     "loggingIn": "Logging in...",
     "loginFailed": "Login failed"
   },
-  "ws": {
+  "connection": {
     "connected": "Connected",
-    "connecting": "Connecting...",
-    "disconnected": "Disconnected"
+    "connecting": "Reconnecting...",
+    "disconnected": "Connection lost"
   },
   "settings": {
     "title": "Settings",

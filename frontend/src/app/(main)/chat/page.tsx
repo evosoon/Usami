@@ -4,6 +4,7 @@ import { ThreadList } from "@/components/chat/thread-list";
 import { MessageList } from "@/components/chat/message-list";
 import { ChatInput } from "@/components/chat/chat-input";
 import { PhaseBanner } from "@/components/chat/phase-banner";
+import { ConnectionStatusBar } from "@/components/chat/connection-status-bar";
 import { useDerivedMessages } from "@/hooks/use-derived-messages";
 import { useTaskDetail } from "@/hooks/use-task-detail";
 import { useThreadStore } from "@/stores/thread-store";
@@ -14,7 +15,7 @@ export default function ChatPage() {
     s.activeThreadId ? s.threads.get(s.activeThreadId) : undefined,
   );
 
-  // Fetch task detail (triggers REST polling for HiTL fallback)
+  // Fetch task detail on mount (SSE handles live updates)
   useTaskDetail(activeThreadId);
 
   // Derive messages from event stream
@@ -24,7 +25,10 @@ export default function ChatPage() {
     <div className="flex h-full">
       <ThreadList />
       <div className="flex flex-1 flex-col">
-        {activeThread && <PhaseBanner phase={activeThread.phase} />}
+        <ConnectionStatusBar />
+        {activeThread && (
+          <PhaseBanner phase={activeThread.phase} />
+        )}
         <MessageList messages={messages} />
         <ChatInput />
       </div>

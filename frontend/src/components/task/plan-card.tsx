@@ -16,7 +16,7 @@ export function PlanCard({ plan, threadId }: PlanCardProps) {
   const t = useTranslations("task");
 
   return (
-    <Card className="max-w-md">
+    <Card className="w-full max-w-2xl">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm">
           {t("planTitle", { count: plan.tasks.length })}
