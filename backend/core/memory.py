@@ -9,6 +9,8 @@ MVP 阶段:
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 import structlog
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
@@ -138,6 +140,16 @@ _engine = None
 _session_factory = None
 
 
+def _run_alembic_migrations(alembic_ini_path: str) -> None:
+    """Run Alembic migrations synchronously (meant for thread pool execution)."""
+    from alembic.config import Config
+
+    from alembic import command
+
+    alembic_cfg = Config(alembic_ini_path)
+    command.upgrade(alembic_cfg, "head")
+
+
 async def init_database(database_url: str) -> None:
     """初始化数据库连接 + 执行 Alembic 迁移"""
     global _engine, _session_factory
@@ -145,19 +157,23 @@ async def init_database(database_url: str) -> None:
     # SQLAlchemy 需要 async driver
     async_url = database_url.replace("postgresql://", "postgresql+asyncpg://")
 
-    _engine = create_async_engine(async_url, echo=False)
+    _engine = create_async_engine(
+        async_url,
+        echo=False,
+        pool_size=10,
+        max_overflow=20,
+        pool_recycle=3600,
+        pool_pre_ping=True,
+    )
     _session_factory = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
 
-    # 使用 Alembic 管理 schema（同步 psycopg 驱动）
+    # Run Alembic migrations in thread pool to avoid blocking the async event loop
+    import asyncio
     from pathlib import Path
 
-    from alembic.config import Config
-
-    from alembic import command
-
     alembic_ini = Path(__file__).parent.parent / "alembic.ini"
-    alembic_cfg = Config(str(alembic_ini))
-    command.upgrade(alembic_cfg, "head")
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _run_alembic_migrations, str(alembic_ini))
 
     logger.info("database_initialized", url=database_url[:30] + "...")
 
@@ -176,8 +192,13 @@ async def init_database_for_tests(database_url: str) -> None:
     logger.info("test_database_initialized")
 
 
-def get_session() -> AsyncSession:
-    """获取数据库会话"""
+@asynccontextmanager
+async def get_session():
+    """获取数据库会话 (async context manager, auto-close)"""
     if _session_factory is None:
         raise RuntimeError("Database not initialized. Call init_database() first.")
-    return _session_factory()
+    session = _session_factory()
+    try:
+        yield session
+    finally:
+        await session.close()

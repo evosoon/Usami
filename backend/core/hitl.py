@@ -64,6 +64,7 @@ class HiTLGateway:
                     "summary": task_output.summary,
                     "confidence": task_output.confidence,
                     "trigger": "low_confidence",
+                    "source_phase": "executing",
                 },
             )
 
@@ -77,6 +78,7 @@ class HiTLGateway:
                     "current_cost": current_cost,
                     "budget": self._max_cost,
                     "trigger": "cost_alert",
+                    "source_phase": "executing",
                 },
                 options=["继续执行", "终止任务"],
             )
@@ -92,6 +94,7 @@ class HiTLGateway:
                     "retry_count": retry_count,
                     "last_error": task_output.metadata.get("error", ""),
                     "trigger": "max_retries",
+                    "source_phase": "executing",
                 },
                 options=["重试", "跳过此任务", "手动介入"],
             )
@@ -109,7 +112,7 @@ class HiTLGateway:
                 hitl_type=HiTLType.PLAN_REVIEW,
                 title="任务计划预览",
                 description=f"Boss 生成了包含 {task_count} 个子任务的执行计划，建议预览确认。",
-                context={"trigger": "complex_plan", "task_count": task_count},
+                context={"trigger": "complex_plan", "task_count": task_count, "source_phase": "validating"},
                 options=["批准执行", "修改计划", "取消"],
             )
         return None

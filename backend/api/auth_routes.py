@@ -4,6 +4,8 @@ Login, refresh, logout endpoints
 """
 from __future__ import annotations
 
+import os
+
 import structlog
 from fastapi import APIRouter, HTTPException, Response
 from fastapi.requests import Request
@@ -14,6 +16,7 @@ from core.auth import (
     create_access_token,
     create_refresh_token,
     decode_token,
+    hash_password,
     verify_password,
 )
 from core.memory import User, get_session
@@ -22,6 +25,9 @@ from core.state import UserProfile, UserRole
 logger = structlog.get_logger()
 
 router = APIRouter()
+
+_IS_PRODUCTION = os.environ.get("APP_ENV", "development") != "development"
+_DUMMY_HASH = hash_password("__timing_safe_dummy__")
 
 
 # ============================================
@@ -42,16 +48,17 @@ class LoginResponse(BaseModel):
 # ============================================
 
 @router.post("/auth/login", response_model=LoginResponse)
-async def login(req: LoginRequest, response: Response):
+async def login(request: Request, response: Response, req: LoginRequest):
     """Authenticate user with email and password."""
-    session = get_session()
-    try:
+    async with get_session() as session:
         result = await session.execute(select(User).where(User.email == req.email))
         user = result.scalar_one_or_none()
-    finally:
-        await session.close()
 
-    if not user or not verify_password(req.password, user.hashed_password):
+    # Constant-time comparison: always run verify_password even if user is None
+    if not user:
+        verify_password(req.password, _DUMMY_HASH)
+        raise HTTPException(status_code=401, detail="邮箱或密码错误")
+    if not verify_password(req.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="邮箱或密码错误")
 
     if not user.is_active:
@@ -65,6 +72,7 @@ async def login(req: LoginRequest, response: Response):
         key="access_token",
         value=access_token,
         httponly=True,
+        secure=_IS_PRODUCTION,
         samesite="lax",
         max_age=24 * 3600,  # 24 hours
         path="/",
@@ -75,6 +83,7 @@ async def login(req: LoginRequest, response: Response):
         key="refresh_token",
         value=refresh_token,
         httponly=True,
+        secure=_IS_PRODUCTION,
         samesite="lax",
         max_age=7 * 24 * 3600,  # 7 days
         path="/api/v1/auth",
@@ -107,26 +116,36 @@ async def refresh(request: Request, response: Response):
     if not user_id:
         raise HTTPException(status_code=401, detail="无效的令牌")
 
-    session = get_session()
-    try:
+    async with get_session() as session:
         result = await session.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
-    finally:
-        await session.close()
 
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="用户不存在或已被禁用")
 
     access_token = create_access_token(user.id, user.role)
+    new_refresh_token = create_refresh_token(user.id)
 
     # Update access token cookie (24h)
     response.set_cookie(
         key="access_token",
         value=access_token,
         httponly=True,
+        secure=_IS_PRODUCTION,
         samesite="lax",
         max_age=24 * 3600,  # 24 hours
         path="/",
+    )
+
+    # Rotate refresh token (7d)
+    response.set_cookie(
+        key="refresh_token",
+        value=new_refresh_token,
+        httponly=True,
+        secure=_IS_PRODUCTION,
+        samesite="lax",
+        max_age=7 * 24 * 3600,  # 7 days
+        path="/api/v1/auth",
     )
 
     profile = UserProfile(

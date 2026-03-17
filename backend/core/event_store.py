@@ -5,13 +5,17 @@ Single source of truth for all task state and history.
 """
 from __future__ import annotations
 
+import contextlib
 import uuid
 
 import structlog
-from sqlalchemy import func, select, text
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import func, insert, select, text
 
-from core.memory import Event, get_session
-from core.state import PersistedEvent
+from core.memory import Event, TaskLog, get_session
+from core.state import EVENT_PHASE_MAP, PersistedEvent
+
+MAX_PAYLOAD_FIELD_SIZE = 100_000  # 100KB per field
 
 logger = structlog.get_logger()
 
@@ -21,51 +25,82 @@ async def persist_event(
     user_id: str,
     event_type: str,
     payload: dict,
+    _max_retries: int = 2,
 ) -> PersistedEvent:
-    """Write an event to the DB with monotonically increasing per-thread seq."""
-    session = get_session()
-    try:
-        # Assign next seq for this thread (safe: one writer per thread)
+    """Write an event to the DB with monotonically increasing per-thread seq.
+
+    Uses ORM insert with scalar subquery to prevent seq race conditions
+    when parallel tasks persist events for the same thread.
+    """
+    # Truncate oversized payload fields to prevent DB bloat
+    for key in ("result", "full_result"):
+        if key in payload and isinstance(payload[key], str) and len(payload[key]) > MAX_PAYLOAD_FIELD_SIZE:
+            payload = {**payload, key: payload[key][:MAX_PAYLOAD_FIELD_SIZE] + "\n\n... [truncated]"}
+
+    event_id = f"evt_{uuid.uuid4().hex[:16]}"
+
+    for attempt in range(_max_retries):
+        async with get_session() as session:
+            try:
+                # Atomic seq via ORM: avoids raw SQL parameter binding issues with asyncpg
+                next_seq_subq = (
+                    select(func.coalesce(func.max(Event.seq), 0) + 1)
+                    .where(Event.thread_id == thread_id)
+                    .scalar_subquery()
+                )
+                stmt = (
+                    insert(Event)
+                    .values(
+                        id=event_id,
+                        thread_id=thread_id,
+                        user_id=user_id,
+                        seq=next_seq_subq,
+                        event_type=event_type,
+                        payload=payload,
+                    )
+                    .returning(Event.seq, Event.created_at)
+                )
+                result = await session.execute(stmt)
+                row = result.one()
+                next_seq = row.seq
+                created_at = row.created_at
+                await session.commit()
+
+                logger.debug(
+                    "event_persisted",
+                    thread_id=thread_id,
+                    seq=next_seq,
+                    event_type=event_type,
+                )
+
+                return PersistedEvent(
+                    id=event_id,
+                    thread_id=thread_id,
+                    user_id=user_id,
+                    seq=next_seq,
+                    event_type=event_type,
+                    payload=payload,
+                    created_at=str(created_at or ""),
+                )
+            except Exception as e:
+                await session.rollback()
+                # Retry on unique constraint violation (seq collision)
+                if attempt < _max_retries - 1 and "uq_events_thread_seq" in str(e):
+                    event_id = f"evt_{uuid.uuid4().hex[:16]}"
+                    logger.warning("event_seq_collision_retry", thread_id=thread_id, attempt=attempt)
+                    continue
+                raise
+
+
+async def verify_thread_ownership(thread_id: str, user_id: str) -> bool:
+    """Check if a user owns a thread (has at least one event in it)."""
+    async with get_session() as session:
         result = await session.execute(
-            select(func.coalesce(func.max(Event.seq), 0)).where(
-                Event.thread_id == thread_id
+            select(func.count()).select_from(Event).where(
+                Event.thread_id == thread_id, Event.user_id == user_id
             )
         )
-        next_seq = result.scalar_one() + 1
-
-        event_id = f"evt_{uuid.uuid4().hex[:16]}"
-        event = Event(
-            id=event_id,
-            thread_id=thread_id,
-            user_id=user_id,
-            seq=next_seq,
-            event_type=event_type,
-            payload=payload,
-        )
-        session.add(event)
-        await session.commit()
-
-        logger.debug(
-            "event_persisted",
-            thread_id=thread_id,
-            seq=next_seq,
-            event_type=event_type,
-        )
-
-        return PersistedEvent(
-            id=event_id,
-            thread_id=thread_id,
-            user_id=user_id,
-            seq=next_seq,
-            event_type=event_type,
-            payload=payload,
-            created_at=str(event.created_at or ""),
-        )
-    except Exception:
-        await session.rollback()
-        raise
-    finally:
-        await session.close()
+        return result.scalar_one() > 0
 
 
 async def get_thread_events(
@@ -73,8 +108,7 @@ async def get_thread_events(
     after_seq: int = 0,
 ) -> list[PersistedEvent]:
     """Retrieve events for a thread, optionally after a given seq (for replay)."""
-    session = get_session()
-    try:
+    async with get_session() as session:
         stmt = (
             select(Event)
             .where(Event.thread_id == thread_id, Event.seq > after_seq)
@@ -94,8 +128,6 @@ async def get_thread_events(
             )
             for row in rows
         ]
-    finally:
-        await session.close()
 
 
 async def list_user_threads(
@@ -103,8 +135,7 @@ async def list_user_threads(
     limit: int = 50,
 ) -> list[dict]:
     """List distinct threads for a user with summary info derived from events."""
-    session = get_session()
-    try:
+    async with get_session() as session:
         # Subquery: get first and last event per thread for this user
         stmt = text("""
             SELECT
@@ -138,32 +169,54 @@ async def list_user_threads(
         result = await session.execute(stmt, {"user_id": user_id, "limit": limit})
         rows = result.fetchall()
 
-        # Map latest_event_type to a phase
-        event_to_phase = {
-            "task.created": "created",
-            "task.planning": "planning",
-            "task.planning_chunk": "planning",
-            "task.plan_ready": "planned",
-            "task.executing": "executing",
-            "task.progress": "executing",
-            "task.aggregating": "aggregating",
-            "task.result_chunk": "aggregating",
-            "task.completed": "completed",
-            "task.failed": "failed",
-            "hitl.request": "hitl_waiting",
-            "task.heartbeat": "executing",
-        }
-
         return [
             {
                 "thread_id": row.thread_id,
                 "intent": row.intent or "",
-                "latest_phase": event_to_phase.get(row.latest_event_type or "", "created"),
+                "latest_phase": EVENT_PHASE_MAP.get(row.latest_event_type or "", "created"),
                 "result": row.result,
                 "created_at": str(row.created_at or ""),
                 "updated_at": str(row.updated_at or ""),
             }
             for row in rows
         ]
-    finally:
-        await session.close()
+
+
+async def delete_thread(thread_id: str, user_id: str) -> int:
+    """Delete all data for a thread. Returns deleted event count. Checks ownership via user_id."""
+    async with get_session() as session:
+        try:
+            # Verify ownership: at least one event belongs to this user
+            result = await session.execute(
+                select(func.count()).select_from(Event).where(
+                    Event.thread_id == thread_id, Event.user_id == user_id
+                )
+            )
+            if result.scalar_one() == 0:
+                return 0
+
+            # Delete events
+            result = await session.execute(
+                sa_delete(Event).where(Event.thread_id == thread_id)
+            )
+            deleted_count = result.rowcount
+
+            # Delete task_logs
+            await session.execute(
+                sa_delete(TaskLog).where(TaskLog.thread_id == thread_id)
+            )
+
+            # Delete LangGraph checkpoint tables (may not exist in all environments)
+            for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints"):
+                with contextlib.suppress(Exception):
+                    await session.execute(
+                        text(f"DELETE FROM {table} WHERE thread_id = :tid"),
+                        {"tid": thread_id},
+                    )
+
+            await session.commit()
+            logger.info("thread_deleted", thread_id=thread_id, deleted_events=deleted_count)
+            return deleted_count
+        except Exception:
+            await session.rollback()
+            raise

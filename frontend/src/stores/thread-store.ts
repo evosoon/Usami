@@ -42,6 +42,7 @@ interface ThreadStore {
   getActiveThread: () => Thread | undefined;
   loadThreads: () => Promise<void>;
   loadThreadEvents: (threadId: string) => Promise<void>;
+  removeThread: (threadId: string) => void;
 }
 
 const EVENT_TO_PHASE: Record<string, Phase> = {
@@ -308,4 +309,12 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       // Non-fatal
     }
   },
+
+  removeThread: (threadId) =>
+    set((state) => {
+      const threads = new Map(state.threads);
+      threads.delete(threadId);
+      const activeThreadId = state.activeThreadId === threadId ? null : state.activeThreadId;
+      return { threads, activeThreadId };
+    }),
 }));

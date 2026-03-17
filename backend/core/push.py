@@ -37,14 +37,11 @@ async def send_push(user_id: str, title: str, body: str, url: str = "/chat") -> 
     if not _vapid_private_key:
         return
 
-    session = get_session()
-    try:
+    async with get_session() as session:
         result = await session.execute(
             select(PushSubscription).where(PushSubscription.user_id == user_id)
         )
         subscriptions = result.scalars().all()
-    finally:
-        await session.close()
 
     payload = json.dumps({"title": title, "body": body, "url": url})
 
@@ -63,9 +60,6 @@ async def send_push(user_id: str, title: str, body: str, url: str = "/chat") -> 
             logger.warning("push_failed", user_id=user_id, endpoint=sub.endpoint, error=str(e))
             # Remove expired/invalid subscriptions (410 Gone)
             if e.response and e.response.status_code == 410:
-                del_session = get_session()
-                try:
+                async with get_session() as del_session:
                     await del_session.delete(sub)
                     await del_session.commit()
-                finally:
-                    await del_session.close()

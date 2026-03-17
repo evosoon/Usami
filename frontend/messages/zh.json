@@ -32,12 +32,14 @@
     "completed": "任务完成",
     "failed": "任务失败: {error}",
     "hitlWaiting": "等待您的确认...",
+    "thinkingSteps": "思考过程（{count} 步）",
     "noThreads": "暂无对话",
-    "currentPhase": "当前阶段:",
     "timeJustNow": "刚刚",
     "timeMinutesAgo": "{count}分钟前",
     "timeHoursAgo": "{count}小时前",
-    "timeDaysAgo": "{count}天前"
+    "timeDaysAgo": "{count}天前",
+    "deleteThread": "删除对话",
+    "deleteConfirm": "确认删除此对话？此操作不可恢复。"
   },
   "phase": {
     "created": "已创建",

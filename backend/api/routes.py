@@ -9,11 +9,11 @@ import uuid
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.auth import get_current_user
-from core.event_store import get_thread_events, list_user_threads, persist_event
-from core.state import UserProfile
+from core.event_store import delete_thread, get_thread_events, list_user_threads, persist_event, verify_thread_ownership
+from core.state import EVENT_PHASE_MAP, UserProfile
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -25,7 +25,7 @@ router = APIRouter()
 
 class TaskRequest(BaseModel):
     """用户任务请求"""
-    intent: str
+    intent: str = Field(min_length=1, max_length=5000)
     config: dict = {}
     thread_id: str | None = None  # follow-up: reuse existing thread
 
@@ -63,14 +63,26 @@ async def _get_thread_last_result(thread_id: str) -> str | None:
 # ============================================
 
 @router.post("/tasks", response_model=TaskResponse)
-async def create_task(req: TaskRequest, request: Request, _user: UserProfile = Depends(get_current_user)):
+async def create_task(request: Request, req: TaskRequest, _user: UserProfile = Depends(get_current_user)):
     """
     创建新任务
     用户意图 → Boss 分解 → Persona 执行 → 交付结果
     """
+    # Per-user concurrent task limit
+    active_tasks = request.app.state.active_tasks
+    MAX_CONCURRENT_TASKS_PER_USER = 3
+    user_active = sum(
+        1 for r in active_tasks.values()
+        if isinstance(r, dict) and r.get("user_id") == _user.id
+    )
+    if user_active >= MAX_CONCURRENT_TASKS_PER_USER:
+        raise HTTPException(status_code=429, detail="并发任务数已达上限")
+
     # Follow-up: reuse thread_id, load previous result for context
     if req.thread_id:
         thread_id = req.thread_id
+        if not await verify_thread_ownership(thread_id, _user.id):
+            raise HTTPException(status_code=404, detail="任务不存在")
         previous_result = await _get_thread_last_result(thread_id)
     else:
         thread_id = f"thread_{uuid.uuid4().hex[:12]}"
@@ -108,6 +120,8 @@ async def create_task(req: TaskRequest, request: Request, _user: UserProfile = D
                 await sse_manager.send_to_user(_user.id, persisted)
         except Exception as e:
             logger.error("task_execution_failed", thread_id=thread_id, error=str(e))
+        finally:
+            request.app.state.active_tasks.pop(thread_id, None)
 
     # 异步执行: 不阻塞 HTTP 响应
     task = asyncio.create_task(_run())
@@ -131,6 +145,8 @@ async def create_task(req: TaskRequest, request: Request, _user: UserProfile = D
 @router.get("/tasks/{thread_id}")
 async def get_task_status(thread_id: str, request: Request, _user: UserProfile = Depends(get_current_user)):
     """获取任务执行状态 — 从事件表派生"""
+    if not await verify_thread_ownership(thread_id, _user.id):
+        raise HTTPException(status_code=404, detail="任务不存在")
     events = await get_thread_events(thread_id)
     if not events:
         # Fallback: try LangGraph Checkpoint
@@ -152,20 +168,8 @@ async def get_task_status(thread_id: str, request: Request, _user: UserProfile =
     error = None
     hitl_pending = []
 
-    event_to_phase = {
-        "task.created": "created",
-        "task.planning": "planning",
-        "task.plan_ready": "planned",
-        "task.executing": "executing",
-        "task.progress": "executing",
-        "task.aggregating": "aggregating",
-        "task.completed": "completed",
-        "task.failed": "failed",
-        "hitl.request": "hitl_waiting",
-    }
-
     for evt in events:
-        phase = event_to_phase.get(evt.event_type, phase)
+        phase = EVENT_PHASE_MAP.get(evt.event_type, phase)
         if evt.event_type == "task.completed":
             result = evt.payload.get("result")
         elif evt.event_type == "task.failed":
@@ -224,6 +228,8 @@ async def resolve_hitl(
     _user: UserProfile = Depends(get_current_user),
 ):
     """用户回应 HiTL 请求 — 记录决定 + 恢复 Graph 执行"""
+    if not await verify_thread_ownership(thread_id, _user.id):
+        raise HTTPException(status_code=404, detail="任务不存在")
     hitl_gateway = request.app.state.hitl_gateway
     boss_graph = request.app.state.boss_graph
 
@@ -244,12 +250,25 @@ async def resolve_hitl(
             decision=req.decision,
             feedback=req.feedback,
         )
+
+        # Derive source_phase from the last hitl.request event (not hardcoded)
+        events = await get_thread_events(thread_id)
+        source_phase = "executing"  # safe default
+        for evt in reversed(events):
+            if evt.event_type == "hitl.request":
+                source_phase = (
+                    evt.payload.get("request", {})
+                    .get("context", {})
+                    .get("source_phase", "executing")
+                )
+                break
+
         await boss_graph.aupdate_state(
             config,
             {
                 "hitl_resolved": [response],
                 "hitl_pending": [],
-                "current_phase": "executing",
+                "current_phase": source_phase,
             },
         )
 
@@ -262,13 +281,18 @@ async def resolve_hitl(
             )
             await sse_manager.send_to_user(_user.id, persisted)
 
-        task_record = request.app.state.active_tasks.get(thread_id, {})
+        # Ensure active_tasks has entry (may be missing if server restarted)
+        if thread_id not in request.app.state.active_tasks:
+            request.app.state.active_tasks[thread_id] = {"task": None, "user_id": _user.id}
+        task_record = request.app.state.active_tasks[thread_id]
 
         async def _resume():
             try:
                 await boss_graph.ainvoke(None, config=config)
             except Exception as e:
                 logger.error("hitl_resume_failed", thread_id=thread_id, error=str(e))
+            finally:
+                request.app.state.active_tasks.pop(thread_id, None)
 
         task = asyncio.create_task(_resume())
         if isinstance(task_record, dict):
@@ -286,6 +310,8 @@ async def cancel_task(
     _user: UserProfile = Depends(get_current_user),
 ):
     """Cancel a running task."""
+    if not await verify_thread_ownership(thread_id, _user.id):
+        raise HTTPException(status_code=404, detail="任务不存在")
     task_record = request.app.state.active_tasks.get(thread_id)
     if not task_record or not isinstance(task_record, dict):
         raise HTTPException(status_code=404, detail="任务不存在")
@@ -328,8 +354,32 @@ async def get_thread_events_api(
     after_seq: int = 0,
 ):
     """Replay all events for a thread (for history loading)."""
+    if not await verify_thread_ownership(thread_id, user.id):
+        raise HTTPException(status_code=404, detail="任务不存在")
     events = await get_thread_events(thread_id, after_seq=after_seq)
     return [e.model_dump() for e in events]
+
+
+@router.delete("/threads/{thread_id}")
+async def delete_thread_api(
+    thread_id: str,
+    request: Request,
+    _user: UserProfile = Depends(get_current_user),
+):
+    """删除对话及其所有事件"""
+    # Cancel running task if any
+    task_record = request.app.state.active_tasks.get(thread_id)
+    if task_record and isinstance(task_record, dict):
+        task = task_record.get("task")
+        if task and not task.done():
+            task.cancel()
+        request.app.state.active_tasks.pop(thread_id, None)
+
+    deleted = await delete_thread(thread_id, _user.id)
+    if deleted == 0:
+        raise HTTPException(status_code=404, detail="对话不存在")
+    logger.info("thread_deleted", thread_id=thread_id, user_id=_user.id)
+    return {"status": "deleted"}
 
 
 # ============================================
