@@ -145,10 +145,10 @@ async def app_client():
     app.state.boss_graph = mock_graph
     app.state.hitl_gateway = HiTLGateway()
     app.state.active_tasks = {}
-    mock_ws_manager = MagicMock()
-    mock_ws_manager.broadcast = AsyncMock()
-    mock_ws_manager.send_event = AsyncMock()
-    app.state.ws_manager = mock_ws_manager
+    mock_sse_manager = MagicMock()
+    mock_sse_manager.send_to_user = AsyncMock()
+    mock_sse_manager.active_connections = 0
+    app.state.sse_manager = mock_sse_manager
     app.state.persona_factory = mock_persona_factory
     app.state.tool_registry = MagicMock()
     app.state.tool_registry.list_tools.return_value = []

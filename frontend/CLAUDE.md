@@ -61,7 +61,7 @@ src/
 │   ├── hitl/                    # HiTL dialog
 │   └── admin/                   # Admin panels: persona-card, tool-table, job-table, health-panel, user-table
 ├── hooks/                       # TanStack Query hooks + derived state
-├── lib/                         # API clients, WebSocket, constants, utils, push
+├── lib/                         # API clients, SSE, constants, utils, push
 ├── stores/                      # Zustand stores (4 stores)
 ├── types/                       # TypeScript types (mirrors backend Pydantic)
 ├── i18n/                        # next-intl config and request handler
@@ -77,17 +77,18 @@ public/
 
 ## Architecture patterns (7 patterns to internalize)
 
-### 1. Event-driven state (WS → Zustand → React)
+### 1. Event-driven state (SSE → Zustand → React)
 
 ```
-Backend WS event → UsamiWebSocket → ws-store → thread-store.appendEvent() → Re-render
+Backend SSE event → UsamiSSE → sse-store → thread-store.appendEvent() → Re-render
 ```
 
-- All WS events flow into `thread-store` as an **append-only event log**.
+- All SSE events flow into `thread-store` as an **append-only event log**.
 - `EVENT_TO_PHASE` mapping automatically transitions thread phase.
-- `appendEvent()` extracts `result` from `task.completed` events and `pendingHitl` from `hitl.request` events.
+- `appendEvent()` extracts `result` from `task.completed` events, `pendingHitl` from `hitl.request` events, and accumulates streaming chunks.
 - `useDerivedMessages()` hook transforms raw events → chat UI messages (pure derived state).
 - Never manually manage message arrays — messages are always derived from events.
+- History loaded from REST (`GET /threads`) on mount, replayed from `GET /threads/{id}/events`.
 
 ### 2. Dual API layer (client vs server)
 
@@ -100,24 +101,29 @@ Backend WS event → UsamiWebSocket → ws-store → thread-store.appendEvent() 
 - Server-side API uses `fetch()` with `next.revalidate` for caching.
 - Both return typed responses from `types/api.ts`.
 
-### 3. WS-first architecture (no polling)
+### 3. SSE-first architecture (no polling)
 
-- **Primary**: WebSocket delivers all state updates in real-time, including `result` in `task.completed`.
-- **Reconnect recovery**: On WS reconnect, `WsConnector` invalidates active thread query to catch missed events.
-- **No periodic polling** — REST only fetches on mount and reconnect.
+- **Primary**: SSE delivers all state updates in real-time via `EventSource` with `withCredentials: true`.
+- **Auth**: Cookie-based (httpOnly cookies auto-sent by browser). No token management in JS.
+- **Reconnect**: Manual reconnect with exponential backoff (1s → 30s max). `Last-Event-ID` query param for missed event replay.
+- **Multi-tab**: Same user, all tabs receive events (per-user directed routing on backend).
+- **No periodic polling** — REST only fetches on mount. `staleTime: Infinity` on task detail query.
+- **Disconnect UI**: `ConnectionStatusBar` shows yellow/red bar; chat input disabled when disconnected.
 
 ### 4. Global HiTL watcher
 
 `<HiTLWatcher />` in `<Providers />` watches **all threads** for `pendingHitl.length > 0`. Auto-opens `<HiTLDialog />` when detected. Guarantees HiTL is never missed regardless of which thread is active.
 
-### 5. Cookie-based auth with middleware
+### 5. Cookie-based auth with auto-refresh
 
 - `middleware.ts` checks `access_token` cookie on every request to authenticated routes.
 - Missing cookie → redirect to `/login`.
 - Admin routes (`/admin/*`) additionally decode JWT payload to check `role === "admin"`.
 - Non-admin user accessing `/admin` → redirect to `/chat`.
-- Login page stores token via `useAuthStore.setAuth(user, accessToken)`.
-- WS appends token as `?token=` query param.
+- Login sets user in `useAuthStore.setUser(user)` — no token stored in JS memory.
+- `AuthHydrator` in `<Providers />` restores user profile on page refresh via `POST /auth/refresh`.
+- `api-client.ts` auto-refreshes on 401: singleton refresh promise dedup, then retry.
+- SSE uses cookies automatically (same hostname, `withCredentials: true`).
 
 ### 6. Separated route groups
 
@@ -127,25 +133,25 @@ Backend WS event → UsamiWebSocket → ws-store → thread-store.appendEvent() 
 
 ### 7. Notification system
 
-- **In-app**: `NotificationWatcher` in providers listens to WS events → creates notifications in `notification-store`. `NotificationCenter` dropdown in headers shows unread count + notification list.
+- **In-app**: `NotificationWatcher` in providers listens to SSE events → creates notifications in `notification-store`. `NotificationCenter` dropdown in headers shows unread count + notification list.
 - **Push**: Service Worker (`public/sw.js`) + Web Push API. Backend sends via `pywebpush`. Managed in settings page.
 
 ## Four Zustand stores
 
 | Store | File | Purpose |
 |-------|------|---------|
-| `useAuthStore` | `stores/auth-store.ts` | `user`, `accessToken`, `isAuthenticated`, `logout()` |
-| `useWsStore` | `stores/ws-store.ts` | WS connection lifecycle, bridges WS events → `thread-store` |
-| `useThreadStore` | `stores/thread-store.ts` | Thread map, event log, phase tracking, HiTL state, result |
+| `useAuthStore` | `stores/auth-store.ts` | `user`, `isAuthenticated`, `setUser()`, `logout()` |
+| `useSseStore` | `stores/sse-store.ts` | SSE connection lifecycle, bridges SSE events → `thread-store` |
+| `useThreadStore` | `stores/thread-store.ts` | Thread map, event log, phase tracking, HiTL state, result, history loading |
 | `useNotificationStore` | `stores/notification-store.ts` | In-app notifications, unread count, mark read/clear |
 
-Cross-store access pattern: `useAuthStore.getState().accessToken` (no hook, for non-React code).
+Cross-store access pattern: `useAuthStore.getState().user` (no hook, for non-React code).
 
 ## TanStack Query hooks
 
 | Hook | File | Purpose |
 |------|------|---------|
-| `useTaskDetail` | `hooks/use-task-detail.ts` | Task query (no polling — WS-first) |
+| `useTaskDetail` | `hooks/use-task-detail.ts` | Task query (no polling — SSE-first) |
 | `useCreateTask` | `hooks/use-create-task.ts` | Create task mutation, auto-creates thread |
 | `useResolveHitl` | `hooks/use-resolve-hitl.ts` | Resolve HiTL mutation |
 | `useHealth` | `hooks/use-health.ts` | Health check query |
@@ -177,7 +183,7 @@ Default query config: `staleTime: 30_000`, `retry: 1`.
 | Files | `kebab-case.tsx` | `use-task-detail.ts`, `message-bubble.tsx` |
 | Components | `PascalCase` | `MessageBubble`, `TaskDag` |
 | Hooks | `use` prefix | `useTaskDetail`, `useCreateTask` |
-| Stores | `use*Store` | `useThreadStore`, `useWsStore` |
+| Stores | `use*Store` | `useThreadStore`, `useSseStore` |
 | Types/Interfaces | `PascalCase` | `TaskPlan`, `HiTLRequest` |
 | Constants | `SCREAMING_SNAKE_CASE` | `API_BASE_URL` |
 
@@ -190,7 +196,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 
 // 2. Type imports (use 'import type')
-import type { WsServerEvent } from "@/types/ws";
+import type { SseEvent } from "@/types/sse";
 
 // 3. Internal modules (use @/ alias, never relative beyond ../)
 import { api } from "@/lib/api-client";
@@ -253,25 +259,28 @@ export function MyComponent({ prop }: { prop: Type }) {
 | `TaskResponse` | `routes.TaskResponse` |
 | `PersonaInfo` | `persona_factory` output |
 
-`types/ws.ts` defines discriminated unions for WS events:
+`types/sse.ts` defines discriminated unions for SSE events:
 
 ```typescript
-export type WsServerEvent =
-  | { type: "task.created"; thread_id: string; intent: string }
-  | { type: "task.completed"; thread_id: string; result?: string }
+export type SseEvent =
+  | { type: "task.created"; thread_id: string; seq: number; intent: string }
+  | { type: "task.completed"; thread_id: string; seq: number; result?: string }
   | ...
 ```
 
-When backend Pydantic models change, update `types/api.ts` and `types/ws.ts` accordingly.
+Every SSE event includes a `seq` number (per-thread monotonic) for replay support.
 
-## WebSocket
+When backend Pydantic models change, update `types/api.ts` and `types/sse.ts` accordingly.
 
-`lib/ws.ts` — `UsamiWebSocket` class:
+## SSE Client
 
-- Client ID persisted in `sessionStorage` (`usami_client_id`).
-- Auto-reconnect with exponential backoff: 1s → 2s → 4s → ... → 30s max.
-- Token auth via `?token=<accessToken>` query param.
-- URL auto-detected from `window.location` at runtime (no build-time env var needed).
+`lib/sse.ts` — `UsamiSSE` class:
+
+- Uses `EventSource` with `withCredentials: true` (cookies auto-sent).
+- Manual reconnect with exponential backoff: 1s → 2s → 4s → ... → 30s max.
+- `lastEventId` tracked for replay on reconnect via `?last_event_id=` query param.
+- URL auto-detected from `window.location` at runtime (direct to backend port, bypasses Next.js rewrite).
+- No `send()` method — client→server communication via REST only.
 
 ## Routing
 
@@ -292,7 +301,7 @@ export default function Page({ params }: { params: Promise<{ threadId: string }>
 | Variable | Context | Default | Purpose |
 |----------|---------|---------|---------|
 | `NEXT_PUBLIC_API_URL` | Client | `""` (empty) | API base URL, empty = use rewrite |
-| `NEXT_PUBLIC_WS_URL` | Client | auto-detect | WS URL, auto-derived from `window.location` |
+| `NEXT_PUBLIC_BACKEND_PORT` | Client | `42001` | Backend port for SSE URL, auto-derived from `window.location` |
 | `BACKEND_INTERNAL_URL` | Server | `http://localhost:8000` | Direct backend for SSR/rewrite |
 
 ## Do NOT

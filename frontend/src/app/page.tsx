@@ -17,7 +17,7 @@ export default async function HomePage() {
       {/* Hero */}
       <section className="flex flex-1 flex-col items-center justify-center gap-6 px-6 py-24 text-center">
         <h1 className="text-5xl font-bold tracking-tight sm:text-6xl">
-          Usami
+          USAMI
         </h1>
         <p className="max-w-2xl text-xl text-muted-foreground">
           {t("subtitle")}

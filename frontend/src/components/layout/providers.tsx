@@ -1,27 +1,51 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "next-themes";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
-import { useWsStore } from "@/stores/ws-store";
+import { useSseStore } from "@/stores/sse-store";
 import { useThreadStore } from "@/stores/thread-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { HiTLDialog } from "@/components/hitl/hitl-dialog";
 import type { HiTLRequest } from "@/types/api";
-import type { WsServerEvent } from "@/types/ws";
+import type { SseEvent } from "@/types/sse";
 
-function WsConnector() {
-  const connect = useWsStore((s) => s.connect);
-  const disconnect = useWsStore((s) => s.disconnect);
-  const status = useWsStore((s) => s.status);
+function AuthHydrator() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const queryClient = useQueryClient();
-  const wasConnected = useRef(false);
+  const setUser = useAuthStore((s) => s.setUser);
+  const hydratedRef = useRef(false);
 
-  // Connect only when authenticated; disconnect on logout
+  useEffect(() => {
+    if (isAuthenticated || hydratedRef.current) return;
+    hydratedRef.current = true;
+
+    // On page refresh, restore user profile from cookie via refresh endpoint
+    fetch("/api/v1/auth/refresh", { method: "POST", credentials: "include" })
+      .then((res) => {
+        if (!res.ok) return null;
+        return res.json();
+      })
+      .then((data) => {
+        if (data?.user) {
+          setUser(data.user);
+        }
+      })
+      .catch(() => {
+        // Not logged in — middleware will redirect if needed
+      });
+  }, [isAuthenticated, setUser]);
+
+  return null;
+}
+
+function SseConnector() {
+  const connect = useSseStore((s) => s.connect);
+  const disconnect = useSseStore((s) => s.disconnect);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+
   useEffect(() => {
     if (isAuthenticated) {
       connect();
@@ -31,26 +55,24 @@ function WsConnector() {
     return () => disconnect();
   }, [isAuthenticated, connect, disconnect]);
 
-  // On WS reconnect, refetch active thread to catch missed events
+  return null;
+}
+
+function HistoryLoader() {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const loadedRef = useRef(false);
+
   useEffect(() => {
-    if (status === "connected") {
-      if (wasConnected.current) {
-        // This is a reconnect — invalidate active thread query
-        const activeId = useThreadStore.getState().activeThreadId;
-        if (activeId) {
-          queryClient.invalidateQueries({ queryKey: ["task", activeId] });
-        }
-      }
-      wasConnected.current = true;
-    }
-  }, [status, queryClient]);
+    if (!isAuthenticated || loadedRef.current) return;
+    loadedRef.current = true;
+    useThreadStore.getState().loadThreads();
+  }, [isAuthenticated]);
 
   return null;
 }
 
 function HiTLWatcher() {
   const threads = useThreadStore((s) => s.threads);
-  const activeThreadId = useThreadStore((s) => s.activeThreadId);
   const [currentHitl, setCurrentHitl] = useState<{
     request: HiTLRequest;
     threadId: string;
@@ -97,16 +119,16 @@ function HiTLWatcher() {
 }
 
 function NotificationWatcher() {
-  const ws = useWsStore((s) => s.ws);
+  const sse = useSseStore((s) => s.sse);
   const handlerRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    if (!ws) return;
+    if (!sse) return;
 
     // Clean up previous handler
     handlerRef.current?.();
 
-    const unsubscribe = ws.onEvent((event: WsServerEvent) => {
+    const unsubscribe = sse.onEvent((event: SseEvent) => {
       const addNotification = useNotificationStore.getState().addNotification;
 
       switch (event.type) {
@@ -139,7 +161,7 @@ function NotificationWatcher() {
 
     handlerRef.current = unsubscribe;
     return () => unsubscribe();
-  }, [ws]);
+  }, [sse]);
 
   return null;
 }
@@ -161,7 +183,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
         <TooltipProvider>
-          <WsConnector />
+          <AuthHydrator />
+          <SseConnector />
+          <HistoryLoader />
           <HiTLWatcher />
           <NotificationWatcher />
           {children}

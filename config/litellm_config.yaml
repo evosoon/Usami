@@ -35,21 +35,7 @@ model_list:
       api_key: "os.environ/OPENAI_API_KEY"
       api_base: "os.environ/OPENAI_API_BASE"
 
-  # NVIDIA 作为降级备选
-  - model_name: "medium"
-    litellm_params:
-      model: "openai/minimaxai/minimax-m2.1"
-      api_key: "os.environ/NVIDIA_API_KEY"
-      api_base: "os.environ/NVIDIA_API_BASE"
-
   # --- 轻量模型: 分类、路由、摘要 ---
-  - model_name: "light"
-    litellm_params:
-      model: "openai/minimaxai/minimax-m2.1"
-      api_key: "os.environ/NVIDIA_API_KEY"
-      api_base: "os.environ/NVIDIA_API_BASE"
-
-  # GPUGeek Gemini 作为 light 层备选
   - model_name: "light"
     litellm_params:
       model: "openai/Vendor2/Gemini-3.1-Pro"
@@ -68,6 +54,7 @@ router_settings:
   routing_strategy: "simple-shuffle"  # 同层级模型随机负载均衡
   num_retries: 2  # 失败后重试 2 次，自动切换到备选模型
   timeout: 60
+  fallbacks: [{"medium": ["strong"]}, {"light": ["medium"]}]  # 跨层降级
 
 # --- 成本追踪 ---
 general_settings:

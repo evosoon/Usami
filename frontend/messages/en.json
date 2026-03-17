@@ -110,10 +110,10 @@
     "loggingIn": "Logging in...",
     "loginFailed": "Login failed"
   },
-  "ws": {
+  "connection": {
     "connected": "Connected",
-    "connecting": "Connecting...",
-    "disconnected": "Disconnected"
+    "connecting": "Reconnecting...",
+    "disconnected": "Connection lost"
   },
   "settings": {
     "title": "Settings",
@@ -184,9 +184,5 @@
     "title": "Usami",
     "description": "Multi-agent collaborative personal AI operating system for technical research and knowledge synthesis",
     "aboutDescription": "Usami architecture design and tech stack introduction"
-  },
-  "ws": {
-    "disconnected": "Connection lost",
-    "connecting": "Reconnecting..."
   }
 }

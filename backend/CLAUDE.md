@@ -20,14 +20,18 @@ backend/
 │   ├── plan_validator.py    # Deterministic DAG validation of Boss output
 │   ├── hitl.py              # HiTL gateway (confidence/cost/retry triggers)
 │   ├── memory.py            # SQLAlchemy models + DB init (Alembic)
+│   ├── event_store.py       # Event persistence and retrieval (persist_event, get_thread_events, list_user_threads)
 │   ├── auth.py              # JWT auth, password hashing, FastAPI dependencies, admin seed
 │   └── push.py              # Web Push notifications via pywebpush (VAPID)
 ├── agents/
-│   ├── boss.py              # Boss supervisor graph (planning -> validate -> execute -> aggregate)
+│   ├── boss.py              # Boss supervisor graph builder (StateGraph assembly + compile)
+│   ├── nodes.py             # Boss graph node functions (planning, validate, execute, aggregate)
 │   └── prompts.py           # All prompt templates and message constants (Boss + HiTL)
 ├── api/
-│   ├── routes.py            # REST endpoints (POST /tasks, GET /tasks/{id}, POST /tasks/{id}/hitl)
-│   ├── websocket.py         # WS /ws/{client_id} + ConnectionManager
+│   ├── routes.py            # REST endpoints (tasks, threads, HiTL, cancel)
+│   ├── sse.py               # SSE endpoint + SSEConnectionManager (per-user directed event routing)
+│   ├── auth_routes.py       # Auth endpoints (login, refresh, logout) — httpOnly cookies
+│   ├── admin_routes.py      # Admin CRUD endpoints
 │   └── notification_routes.py # Push subscription endpoints (subscribe, unsubscribe, VAPID key)
 ├── scheduler/
 │   ├── cron.py              # APScheduler cron jobs
@@ -43,20 +47,21 @@ backend/
 
 ```
 state.py          <- (no deps, pure Pydantic — foundation of everything)
-protocols.py      <- state.py
 config.py         <- (reads YAML + env, no core deps)
 memory.py         <- state.py (SQLAlchemy models mirror Pydantic)
 model_router.py   <- (standalone, uses langchain_openai)
 tool_registry.py  <- (standalone, uses langchain_core.tools)
 plan_validator.py <- state.py
 hitl.py           <- state.py
+event_store.py    <- state.py, memory.py (Event model, PersistedEvent)
 auth.py           <- state.py, memory.py (User model)
 push.py           <- config.py, memory.py (PushSubscription model)
 persona_factory.py <- tool_registry, model_router
 prompts.py        <- (no deps, pure string constants)
-boss.py           <- state, plan_validator, hitl, persona_factory, prompts
-routes.py         <- state (HiTLResponse only)
-websocket.py      <- state (HiTLResponse only)
+nodes.py          <- state, plan_validator, hitl, persona_factory, prompts
+boss.py           <- nodes (graph builder only)
+routes.py         <- state, event_store (HiTLResponse, persist_event)
+sse.py            <- state, event_store, auth (SSEConnectionManager, SSE endpoint)
 main.py           <- everything
 ```
 
@@ -67,8 +72,10 @@ main.py           <- everything
 ### boss.py uses StateGraph(dict), NOT AgentState
 
 ```python
-graph = StateGraph(dict)  # line 368
+graph = StateGraph(dict)  # boss.py
 ```
+
+**Critical**: `StateGraph(dict)` **replaces** state on each node return (no merge). Every node function must return `{**state, ...updates}` to preserve keys like `thread_id` and `user_intent` across nodes. Omitting `**state` causes downstream nodes to lose these values.
 
 Checkpoint values are plain dicts. When reading state via `aget_state()`, fields like `task_plan` may be dict or Pydantic. Always handle both:
 
@@ -112,8 +119,8 @@ Evaluation order matters: confidence -> cost -> retry. First match wins.
 ### main.py lifespan initialization order
 
 ```
-config -> database -> tool_registry -> persona_factory -> hitl_gateway
--> checkpointer (optional, may fail) -> boss_graph -> ws_manager -> scheduler
+config -> database -> auth -> push -> tool_registry -> persona_factory -> hitl_gateway
+-> sse_manager -> checkpointer (optional, may fail) -> boss_graph -> scheduler
 ```
 
 Checkpointer failure is non-fatal — system runs without persistence.
@@ -122,8 +129,8 @@ Checkpointer failure is non-fatal — system runs without persistence.
 
 `core/auth.py` uses module-level globals initialized once at startup via `init_auth(config)`.
 
-- **Token lifecycle**: Access token (15min, configurable) + Refresh token (7d, configurable). Stored as cookies.
-- **Dependencies**: `get_current_user` (extracts user from `Authorization` header or `access_token` cookie) and `require_admin` (checks `UserRole.ADMIN`).
+- **Token lifecycle**: Access token (24h, httpOnly cookie) + Refresh token (7d, httpOnly cookie). No tokens in JSON response bodies.
+- **Dependencies**: `get_current_user` (extracts user from `access_token` cookie) and `require_admin` (checks `UserRole.ADMIN`).
 - **Password hashing**: bcrypt via `hash_password()` / `verify_password()`.
 - **Admin seeding**: `seed_admin_user()` creates admin from `ADMIN_EMAIL`/`ADMIN_PASSWORD` env vars if not exists. Called during lifespan startup.
 
@@ -143,7 +150,7 @@ Checkpointer failure is non-fatal — system runs without persistence.
 
 ## Database migrations
 
-- Models in `core/memory.py` (SQLAlchemy): `TaskLog`, `HiTLEventLog`, `RoutingLog`, `User`, `PushSubscription`.
+- Models in `core/memory.py` (SQLAlchemy): `TaskLog`, `HiTLEventLog`, `RoutingLog`, `User`, `PushSubscription`, `Event`.
 - `init_database()` runs `alembic upgrade head` (sync, blocks briefly at startup).
 - `init_database_for_tests()` uses `create_all()` — fast, skips Alembic.
 - New table: add SQLAlchemy model in `memory.py`, then `alembic revision --autogenerate`.

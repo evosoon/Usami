@@ -40,7 +40,7 @@ class AppConfig:
 
     # Auth
     jwt_secret: str = ""
-    access_token_expire_minutes: int = 15
+    access_token_expire_minutes: int = 1440  # 24 hours
     refresh_token_expire_days: int = 7
     admin_email: str = ""
     admin_password: str = ""
@@ -88,7 +88,7 @@ def load_config() -> AppConfig:
         litellm_master_key=os.environ.get("LITELLM_MASTER_KEY", "sk-usami-dev"),
         searxng_url=os.environ.get("SEARXNG_URL", "http://searxng:8080"),
         jwt_secret=os.environ.get("JWT_SECRET", "usami-dev-secret-change-in-production"),
-        access_token_expire_minutes=int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "15")),
+        access_token_expire_minutes=int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "1440")),
         refresh_token_expire_days=int(os.environ.get("REFRESH_TOKEN_EXPIRE_DAYS", "7")),
         admin_email=os.environ.get("ADMIN_EMAIL", ""),
         admin_password=os.environ.get("ADMIN_PASSWORD", ""),

@@ -110,10 +110,10 @@
     "loggingIn": "登录中...",
     "loginFailed": "登录失败"
   },
-  "ws": {
+  "connection": {
     "connected": "已连接",
-    "connecting": "连接中...",
-    "disconnected": "已断开"
+    "connecting": "正在重连...",
+    "disconnected": "连接已断开"
   },
   "settings": {
     "title": "设置",
@@ -184,9 +184,5 @@
     "title": "Usami",
     "description": "多 Agent 协作的个人 AI 操作系统，技术调研与知识凝练",
     "aboutDescription": "Usami 架构设计和技术栈介绍"
-  },
-  "ws": {
-    "disconnected": "连接已断开",
-    "connecting": "正在重连..."
   }
 }

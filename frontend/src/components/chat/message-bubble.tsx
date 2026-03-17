@@ -41,7 +41,7 @@ function ProgressBubble({ content }: { content: string }) {
 function PlanBubble({ message }: { message: ChatMessage }) {
   return (
     <div className="flex justify-start">
-      <Card className="max-w-[80%]">
+      <Card className="max-w-[80%] min-w-64">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">{message.content}</CardTitle>
         </CardHeader>

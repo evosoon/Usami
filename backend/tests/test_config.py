@@ -82,7 +82,7 @@ def test_load_config_with_defaults():
     assert "usami" in config.database_url
     assert config.litellm_master_key != ""
     assert config.jwt_secret != ""
-    assert config.access_token_expire_minutes == 15
+    assert config.access_token_expire_minutes == 1440
     assert config.refresh_token_expire_days == 7
     assert "researcher" in config.personas
     assert "web_search" in config.tools
@@ -147,7 +147,7 @@ def test_app_config_default_values():
     assert config.litellm_master_key == ""
     assert config.searxng_url == ""
     assert config.jwt_secret == ""
-    assert config.access_token_expire_minutes == 15
+    assert config.access_token_expire_minutes == 1440
     assert config.refresh_token_expire_days == 7
     assert config.admin_email == ""
     assert config.admin_password == ""

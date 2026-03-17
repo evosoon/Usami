@@ -34,7 +34,6 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    access_token: str
     user: UserProfile
 
 
@@ -61,7 +60,17 @@ async def login(req: LoginRequest, response: Response):
     access_token = create_access_token(user.id, user.role)
     refresh_token = create_refresh_token(user.id)
 
-    # Set refresh token as httpOnly cookie
+    # Set access token as httpOnly cookie (24h)
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        samesite="lax",
+        max_age=24 * 3600,  # 24 hours
+        path="/",
+    )
+
+    # Set refresh token as httpOnly cookie (7d)
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
@@ -69,16 +78,6 @@ async def login(req: LoginRequest, response: Response):
         samesite="lax",
         max_age=7 * 24 * 3600,  # 7 days
         path="/api/v1/auth",
-    )
-
-    # Also set access token as cookie for Next.js middleware
-    response.set_cookie(
-        key="access_token",
-        value=access_token,
-        httponly=False,  # Readable by Next.js middleware
-        samesite="lax",
-        max_age=15 * 60,  # 15 minutes
-        path="/",
     )
 
     profile = UserProfile(
@@ -90,7 +89,7 @@ async def login(req: LoginRequest, response: Response):
     )
 
     logger.info("user_login", email=user.email)
-    return LoginResponse(access_token=access_token, user=profile)
+    return LoginResponse(user=profile)
 
 
 @router.post("/auth/refresh")
@@ -120,13 +119,13 @@ async def refresh(request: Request, response: Response):
 
     access_token = create_access_token(user.id, user.role)
 
-    # Update access token cookie
+    # Update access token cookie (24h)
     response.set_cookie(
         key="access_token",
         value=access_token,
-        httponly=False,
+        httponly=True,
         samesite="lax",
-        max_age=15 * 60,
+        max_age=24 * 3600,  # 24 hours
         path="/",
     )
 
@@ -138,7 +137,7 @@ async def refresh(request: Request, response: Response):
         is_active=user.is_active,
     )
 
-    return {"access_token": access_token, "user": profile.model_dump()}
+    return {"user": profile.model_dump()}
 
 
 @router.post("/auth/logout")

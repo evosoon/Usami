@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import structlog
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, String, Text, func
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -111,6 +111,22 @@ class PushSubscription(Base):
     endpoint = Column(String, nullable=False, unique=True)
     p256dh = Column(String, nullable=False)
     auth_key = Column(String, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class Event(Base):
+    """Persisted SSE events — single source of truth for all task state"""
+    __tablename__ = "events"
+    __table_args__ = (
+        UniqueConstraint("thread_id", "seq", name="uq_events_thread_seq"),
+    )
+
+    id = Column(String, primary_key=True)
+    thread_id = Column(String, nullable=False, index=True)
+    user_id = Column(String, nullable=False, index=True)
+    seq = Column(Integer, nullable=False)
+    event_type = Column(String, nullable=False)
+    payload = Column(JSON, nullable=False, default=dict)
     created_at = Column(DateTime, server_default=func.now())
 
 
