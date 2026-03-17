@@ -17,14 +17,17 @@ from apscheduler.triggers.cron import CronTrigger
 
 logger = structlog.get_logger()
 
-# 模块级引用: Boss Graph (通过 init_scheduler 注入)
+# 模块级引用: Boss Graph + active tasks (通过 init_scheduler 注入)
 _boss_graph = None
+_active_tasks: dict[str, Any] | None = None
+SYSTEM_USER_ID = "system"
 
 
-def init_scheduler(config: dict[str, Any], boss_graph=None) -> AsyncIOScheduler:
+def init_scheduler(config: dict[str, Any], boss_graph=None, active_tasks: dict | None = None) -> AsyncIOScheduler:
     """初始化定时调度器"""
-    global _boss_graph
+    global _boss_graph, _active_tasks
     _boss_graph = boss_graph
+    _active_tasks = active_tasks
 
     scheduler = AsyncIOScheduler()
 
@@ -68,6 +71,11 @@ async def _execute_scheduled_task(intent: str, task_id: str) -> None:
 
     thread_id = f"scheduled_{task_id}_{uuid.uuid4().hex[:8]}"
     config = {"configurable": {"thread_id": thread_id}}
+
+    # Register in active_tasks so SSE event callback can find user_id
+    if _active_tasks is not None:
+        _active_tasks[thread_id] = {"task": None, "user_id": SYSTEM_USER_ID}
+
     try:
         await _boss_graph.ainvoke(
             {"user_intent": intent, "current_phase": "init", "thread_id": thread_id},
@@ -76,3 +84,6 @@ async def _execute_scheduled_task(intent: str, task_id: str) -> None:
         logger.info("scheduled_task_completed", task_id=task_id, thread_id=thread_id)
     except Exception as e:
         logger.error("scheduled_task_execution_failed", task_id=task_id, error=str(e))
+    finally:
+        if _active_tasks is not None:
+            _active_tasks.pop(thread_id, None)

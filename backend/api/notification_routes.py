@@ -46,8 +46,7 @@ async def subscribe_push(
     user: UserProfile = Depends(get_current_user),
 ):
     """Save push subscription for the current user."""
-    session = get_session()
-    try:
+    async with get_session() as session:
         # Check if subscription already exists
         result = await session.execute(
             select(PushSubscription).where(PushSubscription.endpoint == req.endpoint)
@@ -67,8 +66,6 @@ async def subscribe_push(
         await session.commit()
         logger.info("push_subscribed", user_id=user.id)
         return {"status": "subscribed"}
-    finally:
-        await session.close()
 
 
 @router.delete("/notifications/subscribe")
@@ -77,8 +74,7 @@ async def unsubscribe_push(
     user: UserProfile = Depends(get_current_user),
 ):
     """Remove push subscription."""
-    session = get_session()
-    try:
+    async with get_session() as session:
         result = await session.execute(
             select(PushSubscription).where(
                 PushSubscription.endpoint == req.endpoint,
@@ -91,5 +87,3 @@ async def unsubscribe_push(
             await session.commit()
             logger.info("push_unsubscribed", user_id=user.id)
         return {"status": "unsubscribed"}
-    finally:
-        await session.close()

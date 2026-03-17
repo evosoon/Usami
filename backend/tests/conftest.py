@@ -4,7 +4,7 @@ Usami — 测试 Fixtures
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -147,6 +147,7 @@ async def app_client():
     app.state.active_tasks = {}
     mock_sse_manager = MagicMock()
     mock_sse_manager.send_to_user = AsyncMock()
+    mock_sse_manager.broadcast_event = AsyncMock()
     mock_sse_manager.active_connections = 0
     app.state.sse_manager = mock_sse_manager
     app.state.persona_factory = mock_persona_factory
@@ -156,6 +157,21 @@ async def app_client():
     app.state.scheduler.get_jobs.return_value = []
     app.state.config = mock_config
 
+    # Mock event_store functions to avoid DB dependency in route tests
+    mock_persisted_event = MagicMock()
+    mock_persisted_event.id = "evt_test"
+    mock_persisted_event.thread_id = "thread_test"
+    mock_persisted_event.user_id = "test_user"
+    mock_persisted_event.seq = 1
+    mock_persisted_event.event_type = "task.created"
+    mock_persisted_event.payload = {}
+    mock_persisted_event.created_at = ""
+
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client, mock_graph
+    with (
+        patch("api.routes.persist_event", new=AsyncMock(return_value=mock_persisted_event)),
+        patch("api.routes.get_thread_events", new=AsyncMock(return_value=[])),
+        patch("api.routes.verify_thread_ownership", new=AsyncMock(return_value=True)),
+    ):
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client, mock_graph

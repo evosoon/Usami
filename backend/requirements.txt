@@ -44,6 +44,7 @@ pywebpush==2.*
 # === Utilities ===
 httpx==0.28.*
 structlog==24.*
+slowapi==0.1.*
 
 # === Testing ===
 pytest==8.*

@@ -181,6 +181,8 @@ class ModelRouter:
         # HA: 重试配置
         self._max_retries = 3
         self._base_delay = 1.0
+        # Usage tracking: updated after each successful LLM call
+        self._last_usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
 
     def get_model(self, task_type: str) -> ChatOpenAI:
         """根据任务类型获取对应模型"""
@@ -235,15 +237,36 @@ class ModelRouter:
     async def astream_with_retry(
         self, model: ChatOpenAI, messages: list
     ) -> AsyncIterator:
-        """带重试 + 断路器的流式模型调用，yield AIMessageChunk"""
+        """带重试 + 断路器的流式模型调用，yield AIMessageChunk。
+
+        Collects token usage from streaming response metadata and updates
+        _last_usage + the most recent routing decision.
+        """
         last_error = None
         for attempt in range(self._max_retries + 1):
             if not self._circuit_breaker.can_execute():
                 raise RuntimeError("LiteLLM 断路器已打开，暂停调用")
             try:
+                usage = {"prompt_tokens": 0, "completion_tokens": 0}
+                start_time = time.time()
                 async for chunk in model.astream(messages):
                     yield chunk
+                    # LangChain AIMessageChunk may carry usage_metadata
+                    meta = getattr(chunk, "usage_metadata", None)
+                    if meta:
+                        usage["prompt_tokens"] += getattr(meta, "input_tokens", 0) or 0
+                        usage["completion_tokens"] += getattr(meta, "output_tokens", 0) or 0
+                elapsed_ms = (time.time() - start_time) * 1000
                 self._circuit_breaker.record_success()
+                # Update last_usage for callers to read
+                self._last_usage = usage
+                # Update the most recent routing decision with actual usage
+                if self._routing_log:
+                    last = self._routing_log[-1]
+                    last.prompt_tokens = usage["prompt_tokens"]
+                    last.completion_tokens = usage["completion_tokens"]
+                    last.latency_ms = elapsed_ms
+                    last.success = True
                 return
             except Exception as e:
                 last_error = e
@@ -258,6 +281,11 @@ class ModelRouter:
                     )
                     await asyncio.sleep(delay)
         raise last_error  # type: ignore[misc]
+
+    @property
+    def last_usage(self) -> dict[str, int]:
+        """Token usage from the most recent LLM call."""
+        return self._last_usage
 
     def get_routing_log(self) -> list[RoutingDecision]:
         """获取路由日志（为未来智能路由提供数据）"""

@@ -12,7 +12,6 @@ import jwt
 import structlog
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.memory import User, get_session
 from core.state import UserProfile, UserRole
@@ -112,12 +111,9 @@ async def get_current_user(request: Request) -> UserProfile:
     if not user_id:
         raise HTTPException(status_code=401, detail="无效的令牌")
 
-    session = get_session()
-    try:
+    async with get_session() as session:
         result = await session.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
-    finally:
-        await session.close()
 
     if not user:
         raise HTTPException(status_code=401, detail="用户不存在")
@@ -151,8 +147,7 @@ async def seed_admin_user() -> None:
         logger.warning("admin_seed_skipped", reason="ADMIN_EMAIL or ADMIN_PASSWORD not set")
         return
 
-    session = get_session()
-    try:
+    async with get_session() as session:
         result = await session.execute(select(User).where(User.email == _admin_email))
         existing = result.scalar_one_or_none()
 
@@ -171,5 +166,3 @@ async def seed_admin_user() -> None:
         session.add(admin)
         await session.commit()
         logger.info("admin_user_created", email=_admin_email)
-    finally:
-        await session.close()

@@ -44,12 +44,9 @@ class UpdateUserRequest(BaseModel):
 @router.get("/admin/users")
 async def list_users(_admin: UserProfile = Depends(require_admin)):
     """List all users (admin only)."""
-    session = get_session()
-    try:
+    async with get_session() as session:
         result = await session.execute(select(User).order_by(User.created_at.desc()))
         users = result.scalars().all()
-    finally:
-        await session.close()
 
     return [
         {
@@ -67,8 +64,7 @@ async def list_users(_admin: UserProfile = Depends(require_admin)):
 @router.post("/admin/users")
 async def create_user(req: CreateUserRequest, _admin: UserProfile = Depends(require_admin)):
     """Create a new user (admin only)."""
-    session = get_session()
-    try:
+    async with get_session() as session:
         # Check if email already exists
         result = await session.execute(select(User).where(User.email == req.email))
         if result.scalar_one_or_none():
@@ -93,8 +89,6 @@ async def create_user(req: CreateUserRequest, _admin: UserProfile = Depends(requ
             "role": user.role,
             "is_active": user.is_active,
         }
-    finally:
-        await session.close()
 
 
 @router.patch("/admin/users/{user_id}")
@@ -104,8 +98,7 @@ async def update_user(
     _admin: UserProfile = Depends(require_admin),
 ):
     """Update user role or active status (admin only)."""
-    session = get_session()
-    try:
+    async with get_session() as session:
         result = await session.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
         if not user:
@@ -130,5 +123,3 @@ async def update_user(
             "role": user.role,
             "is_active": user.is_active,
         }
-    finally:
-        await session.close()

@@ -13,7 +13,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 # ============================================
 # Task & Plan Schema
@@ -142,6 +142,26 @@ class AgentState(BaseModel):
 
     class Config:
         arbitrary_types_allowed = True
+
+
+# ============================================
+# Event Phase Mapping (single source of truth)
+# ============================================
+
+EVENT_PHASE_MAP: dict[str, str] = {
+    "task.created": "created",
+    "task.planning": "planning",
+    "task.planning_chunk": "planning",
+    "task.plan_ready": "planned",
+    "task.executing": "executing",
+    "task.progress": "executing",
+    "task.aggregating": "aggregating",
+    "task.result_chunk": "aggregating",
+    "task.completed": "completed",
+    "task.failed": "failed",
+    "hitl.request": "hitl_waiting",
+    "task.heartbeat": "executing",
+}
 
 
 # ============================================

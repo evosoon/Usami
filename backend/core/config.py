@@ -63,6 +63,9 @@ class AppConfig:
     # Scheduler
     scheduler: dict[str, Any] = field(default_factory=dict)
 
+    # Environment
+    app_env: str = "development"
+
 
 def load_yaml(filename: str) -> dict:
     """加载 YAML 配置文件"""
@@ -81,7 +84,9 @@ def load_config() -> AppConfig:
     tools_cfg = load_yaml("tools.yaml")
     routing_cfg = load_yaml("routing.yaml")
 
-    return AppConfig(
+    app_env = os.environ.get("APP_ENV", "development")
+
+    config = AppConfig(
         database_url=os.environ["DATABASE_URL"],
         redis_url=os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
         litellm_url=os.environ.get("LITELLM_PROXY_URL", "http://localhost:4000"),
@@ -99,4 +104,13 @@ def load_config() -> AppConfig:
         tools=tools_cfg.get("builtin_tools", {}),
         mcp_servers=tools_cfg.get("mcp_servers", {}),
         routing=routing_cfg,
+        app_env=app_env,
     )
+
+    # Reject weak JWT secrets in non-development environments
+    if app_env != "development":
+        _WEAK = {"usami-dev-secret-change-in-production", "change-me-in-production", "secret"}
+        if config.jwt_secret in _WEAK or len(config.jwt_secret) < 32:
+            raise ValueError("JWT_SECRET is too weak for production. Use a random string of at least 32 characters.")
+
+    return config

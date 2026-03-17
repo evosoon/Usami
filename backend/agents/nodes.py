@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from collections.abc import Callable
 from typing import Any
@@ -46,6 +47,27 @@ from core.state import (
 logger = structlog.get_logger()
 
 EmitFn = Callable[[str, dict], Any]
+
+
+def _truncate_summary(text: str, max_chars: int = 1000) -> str:
+    """Format-safe summary truncation at paragraph/sentence boundaries.
+
+    Targets ~500 tokens via ~1000 chars. Avoids mid-word or
+    mid-markdown-structure cuts that break downstream rendering.
+    """
+    if len(text) <= max_chars:
+        return text
+    truncated = text[:max_chars]
+    # Prefer paragraph boundary
+    last_para = truncated.rfind("\n\n")
+    if last_para > max_chars * 0.6:
+        return truncated[:last_para].rstrip() + "\n\n..."
+    # Fallback: sentence/line boundary (Chinese + English punctuation)
+    for sep in ("\n", "。", ". ", "；", "; "):
+        pos = truncated.rfind(sep)
+        if pos > max_chars * 0.6:
+            return truncated[:pos + len(sep)].rstrip() + "\n\n..."
+    return truncated.rstrip() + "\n\n..."
 
 
 def _get(obj: Any, key: str, default: str = "") -> str:
@@ -135,12 +157,22 @@ async def planning_node(
     # Parse Boss output into TaskPlan
     try:
         content = full_response
+        # Try code fence extraction first
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0]
         elif "```" in content:
             content = content.split("```")[1].split("```")[0]
 
-        plan_data = json.loads(content.strip())
+        try:
+            plan_data = json.loads(content.strip())
+        except json.JSONDecodeError:
+            # Fallback: extract outermost JSON object via regex
+            match = re.search(r'\{[\s\S]*\}', full_response)
+            if match:
+                plan_data = json.loads(match.group())
+            else:
+                raise
+
         task_plan = TaskPlan(**plan_data)
     except Exception as e:
         logger.error("plan_parsing_failed", error=str(e))
@@ -198,7 +230,7 @@ async def validate_node(
             description=HITL_PLAN_VALIDATION_DESC.format(
                 errors="; ".join(errors)
             ),
-            context={"errors": errors, "trigger": "plan_validation"},
+            context={"errors": errors, "trigger": "plan_validation", "source_phase": "validating"},
             options=HITL_PLAN_VALIDATION_OPTIONS,
         )
         await emit("hitl.request", {
@@ -292,14 +324,14 @@ async def _run_single_task(
         logger.info("persona_completed", persona=task.assigned_persona, task_id=task.task_id)
         result_content = result["messages"][-1].content if result.get("messages") else ""
 
-        summary = result_content[:500] + ("..." if len(result_content) > 500 else "")
+        summary = _truncate_summary(result_content)
 
         output = TaskOutput(
             task_id=task.task_id,
             persona=task.assigned_persona,
             summary=summary,
             full_result=result_content,
-            confidence=0.8,
+            confidence=1.0,
         )
         task.status = TaskStatus.COMPLETED
 
@@ -372,16 +404,20 @@ async def execute_node(
         return_exceptions=True,
     )
 
-    # Collect results
+    # Collect results (track failures for aggregation awareness)
+    failed_task_ids: list = list(state.get("failed_task_ids", []))
     for res in results:
         if isinstance(res, Exception):
             logger.error("task_gather_exception", error=str(res))
+            failed_task_ids.append({"error": str(res)})
             continue
         task, output, hitl_req = res
         if output:
             task_outputs[task.task_id] = output
             if task.status == TaskStatus.COMPLETED:
                 completed_ids.add(task.task_id)
+            elif task.status == TaskStatus.FAILED:
+                failed_task_ids.append(task.task_id)
         if hitl_req:
             await emit("hitl.request", {
                 "thread_id": thread_id,
@@ -392,6 +428,7 @@ async def execute_node(
                 "task_plan": plan,
                 "task_outputs": task_outputs,
                 "completed_task_ids": list(completed_ids),
+                "failed_task_ids": failed_task_ids,
                 "hitl_pending": [hitl_req],
                 "current_phase": "hitl_waiting",
             }
@@ -404,6 +441,7 @@ async def execute_node(
         "task_plan": plan,
         "task_outputs": task_outputs,
         "completed_task_ids": list(completed_ids),
+        "failed_task_ids": failed_task_ids,
         "current_phase": next_phase,
     }
 
@@ -455,6 +493,11 @@ async def aggregate_node(
         f"[{tid}] ({_get(output, 'persona', 'unknown')}): {_get(output, 'summary', '')}"
         for tid, output in task_outputs.items()
     )
+
+    # Warn Boss about failed tasks so aggregation accounts for gaps
+    failed_ids = state.get("failed_task_ids", [])
+    if failed_ids:
+        task_summaries += f"\n\n[WARNING] The following tasks failed during execution: {failed_ids}"
 
     prompt = BOSS_AGGREGATION_PROMPT.format(
         user_intent=user_intent,

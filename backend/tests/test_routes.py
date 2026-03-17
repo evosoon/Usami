@@ -34,10 +34,10 @@ class TestCreateTask:
 
     @pytest.mark.asyncio
     async def test_create_task_empty_intent(self, app_client):
-        """空 intent 也能创建 (业务层由 Boss 处理)"""
+        """空 intent 被 validation 拒绝 (min_length=1)"""
         client, mock_graph = app_client
         resp = await client.post("/api/v1/tasks", json={"intent": ""})
-        assert resp.status_code == 200
+        assert resp.status_code == 422
 
 
 # ============================================

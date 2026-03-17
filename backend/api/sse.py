@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, Request
@@ -26,11 +27,12 @@ router = APIRouter()
 # ============================================
 
 class SSEConnectionManager:
-    """Per-user directed event routing, supporting multi-tab."""
+    """Per-user directed event routing, supporting multi-tab and multi-worker via Redis pub/sub."""
 
-    def __init__(self) -> None:
+    def __init__(self, redis_client: Any | None = None) -> None:
         # user_id -> list of asyncio.Queue (one per tab/connection)
         self._connections: dict[str, list[asyncio.Queue]] = {}
+        self._redis = redis_client
 
     def connect(self, user_id: str) -> asyncio.Queue:
         """Register a new SSE connection for a user. Returns the queue to read from."""
@@ -51,12 +53,47 @@ class SSEConnectionManager:
         logger.info("sse_disconnected", user_id=user_id, tabs=len(conns))
 
     async def send_to_user(self, user_id: str, event: PersistedEvent) -> None:
-        """Send event to all tabs of a user."""
+        """Send event to all tabs of a user on THIS worker."""
         for queue in self._connections.get(user_id, []):
             try:
                 await queue.put(event)
             except Exception as e:
                 logger.warning("sse_queue_put_failed", user_id=user_id, error=str(e))
+
+    async def broadcast_event(self, user_id: str, event: PersistedEvent) -> None:
+        """Publish event via Redis pub/sub for cross-worker distribution.
+
+        Falls back to local-only delivery when Redis is unavailable.
+        """
+        if self._redis:
+            try:
+                await self._redis.publish(
+                    f"usami:sse:{user_id}",
+                    event.model_dump_json(),
+                )
+                return
+            except Exception as e:
+                logger.warning("sse_redis_publish_failed", user_id=user_id, error=str(e))
+        # Single-worker fallback
+        await self.send_to_user(user_id, event)
+
+    async def start_subscription(self) -> None:
+        """Subscribe to Redis for events targeted at users connected to this worker."""
+        if not self._redis:
+            return
+        try:
+            pubsub = self._redis.pubsub()
+            await pubsub.psubscribe("usami:sse:*")
+            logger.info("sse_redis_subscription_started")
+            async for msg in pubsub.listen():
+                if msg["type"] == "pmessage":
+                    user_id = msg["channel"].decode().split(":")[-1]
+                    event = PersistedEvent.model_validate_json(msg["data"])
+                    await self.send_to_user(user_id, event)
+        except asyncio.CancelledError:
+            logger.info("sse_redis_subscription_stopped")
+        except Exception as e:
+            logger.error("sse_redis_subscription_error", error=str(e))
 
     @property
     def active_connections(self) -> int:
@@ -89,6 +126,9 @@ def format_keepalive() -> str:
 # SSE Endpoint
 # ============================================
 
+MAX_SSE_CONNECTIONS_PER_USER = 5
+
+
 @router.get("/events/stream")
 async def sse_stream(
     request: Request,
@@ -102,6 +142,16 @@ async def sse_stream(
     Keepalive: Server sends comment every 15s on idle.
     """
     sse_manager: SSEConnectionManager = request.app.state.sse_manager
+
+    # Enforce per-user connection limit
+    current_count = len(sse_manager._connections.get(user.id, []))
+    if current_count >= MAX_SSE_CONNECTIONS_PER_USER:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "SSE 连接数已达上限"},
+        )
+
     last_event_id = (
         request.headers.get("Last-Event-ID")
         or request.query_params.get("last_event_id")
@@ -152,8 +202,7 @@ async def _replay_missed(
         from core.memory import Event, get_session
         from sqlalchemy import select
 
-        session = get_session()
-        try:
+        async with get_session() as session:
             result = await session.execute(
                 select(Event.thread_id, Event.seq).where(Event.id == last_event_id)
             )
@@ -167,7 +216,5 @@ async def _replay_missed(
             for event in events:
                 if event.user_id == user_id:
                     await queue.put(event)
-        finally:
-            await session.close()
     except Exception as e:
         logger.warning("sse_replay_failed", user_id=user_id, error=str(e))

@@ -97,8 +97,14 @@ async def lifespan(app: FastAPI):
     app.state.hitl_gateway = hitl_gateway
 
     # 初始化 SSE 连接管理器 (在 boss_graph 之前, 用于回调)
-    sse_manager = SSEConnectionManager()
+    sse_manager = SSEConnectionManager(redis_client=redis_client)
     app.state.sse_manager = sse_manager
+
+    # Start Redis subscription for cross-worker SSE distribution
+    if redis_client:
+        import asyncio as _asyncio
+        _sse_sub_task = _asyncio.create_task(sse_manager.start_subscription())
+        app.state._sse_sub_task = _sse_sub_task
 
     # 构建 Boss Graph（带 Checkpoint 持久化 + SSE 事件回调）
     checkpointer = None
@@ -130,8 +136,8 @@ async def lifespan(app: FastAPI):
             logger.error("event_persist_failed", event_type=event_type, error=str(e))
             return
 
-        # Route to user's SSE connections
-        await sse_manager.send_to_user(user_id, persisted)
+        # Route to user's SSE connections (via Redis for multi-worker)
+        await sse_manager.broadcast_event(user_id, persisted)
 
         # Send browser push notifications for key events
         if event_type in ("task.completed", "task.failed", "hitl.request"):
@@ -167,7 +173,7 @@ async def lifespan(app: FastAPI):
     app.state.active_tasks: dict[str, Any] = {}
 
     # 初始化定时调度器
-    scheduler = init_scheduler(config.scheduler, boss_graph=boss_graph)
+    scheduler = init_scheduler(config.scheduler, boss_graph=boss_graph, active_tasks=app.state.active_tasks)
     scheduler.start()
     app.state.scheduler = scheduler
 
@@ -175,6 +181,11 @@ async def lifespan(app: FastAPI):
 
     # --- Shutdown ---
     scheduler.shutdown()
+
+    # Cancel SSE Redis subscription
+    sse_sub = getattr(app.state, "_sse_sub_task", None)
+    if sse_sub and not sse_sub.done():
+        sse_sub.cancel()
 
     # Cleanup checkpointer context manager
     if hasattr(app.state, 'checkpointer_cm'):
@@ -197,6 +208,16 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Rate limiting
+from core.rate_limit import limiter
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # CORS
 _cors_origins = os.environ.get("CORS_ORIGINS", "http://localhost:42000").split(",")
@@ -243,7 +264,15 @@ async def health(request: Request):
 
     # Redis 状态
     redis_client = getattr(request.app.state, "redis_client", None)
-    checks["redis"] = "ok" if redis_client else "unavailable"
+    if redis_client:
+        try:
+            await redis_client.ping()
+            checks["redis"] = "ok"
+        except Exception:
+            checks["redis"] = "degraded"
+            checks["status"] = "degraded"
+    else:
+        checks["redis"] = "unavailable"
 
     # SSE 连接数
     sse_manager = getattr(request.app.state, "sse_manager", None)
