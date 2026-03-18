@@ -30,7 +30,7 @@ export function ChatInput() {
       (activeThread.phase === "completed" || activeThread.phase === "failed");
 
     if (canFollowUp) {
-      prepareFollowUp(activeThread.threadId);
+      prepareFollowUp(activeThread.threadId, trimmed);
       createTask({ intent: trimmed, threadId: activeThread.threadId });
     } else {
       createTask({ intent: trimmed });

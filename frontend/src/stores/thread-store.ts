@@ -29,6 +29,8 @@ export interface Thread {
   streamingResult: string;
   streamingPlanning: string;
   lastHeartbeat: number | null;
+  /** Pending user intent for follow-up (before task.created event arrives) */
+  pendingIntent: string | null;
 }
 
 interface ThreadStore {
@@ -36,7 +38,7 @@ interface ThreadStore {
   activeThreadId: string | null;
   setActiveThread: (threadId: string | null) => void;
   createThread: (threadId: string, intent: string) => void;
-  prepareFollowUp: (threadId: string) => void;
+  prepareFollowUp: (threadId: string, intent: string) => void;
   appendEvent: (threadId: string, event: SseEvent) => void;
   updateFromRest: (threadId: string, data: Partial<Pick<Thread, "taskPlan" | "pendingHitl" | "result">>) => void;
   getActiveThread: () => Thread | undefined;
@@ -114,11 +116,12 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         streamingResult: "",
         streamingPlanning: "",
         lastHeartbeat: null,
+        pendingIntent: null,
       });
       return { threads, activeThreadId: threadId };
     }),
 
-  prepareFollowUp: (threadId) =>
+  prepareFollowUp: (threadId, intent) =>
     set((state) => {
       const threads = new Map(state.threads);
       const thread = threads.get(threadId);
@@ -130,6 +133,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         streamingResult: "",
         streamingPlanning: "",
         pendingHitl: [],
+        pendingIntent: intent,
       });
       return { threads };
     }),
@@ -154,6 +158,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           streamingResult: "",
           streamingPlanning: "",
           lastHeartbeat: null,
+          pendingIntent: null,
         });
         const activeThreadId = event.type === "task.created" && !state.activeThreadId
           ? threadId
@@ -204,7 +209,10 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         ? [...thread.pendingHitl, event.request]
         : thread.pendingHitl;
 
-      threads.set(threadId, { ...thread, events, phase, error, result, pendingHitl, streamingResult, streamingPlanning });
+      // Clear pendingIntent when task.created arrives (follow-up intent now confirmed)
+      const pendingIntent = event.type === "task.created" ? null : thread.pendingIntent;
+
+      threads.set(threadId, { ...thread, events, phase, error, result, pendingHitl, streamingResult, streamingPlanning, pendingIntent });
       return { threads };
     }),
 
@@ -252,6 +260,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
             streamingResult: "",
             streamingPlanning: "",
             lastHeartbeat: null,
+            pendingIntent: null,
           });
         }
         return { threads };
@@ -284,7 +293,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           }
           events.push(event);
           phase = EVENT_TO_PHASE[event.type] ?? phase;
-          if (event.type === "task.created") intent = event.intent;
+          // Only use the FIRST task.created intent (follow-ups have their own task.created events)
+          if (event.type === "task.created" && !intent) intent = event.intent;
           if (event.type === "task.completed") result = event.result ?? null;
           if (event.type === "task.failed") error = event.error;
           if (event.type === "hitl.request") pendingHitl.push(event.request);
@@ -303,6 +313,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           streamingResult: "",
           streamingPlanning: "",
           lastHeartbeat: null,
+          pendingIntent: null,
         });
         return { threads };
       });
