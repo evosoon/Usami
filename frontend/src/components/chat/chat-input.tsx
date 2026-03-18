@@ -2,6 +2,7 @@
 
 import { useRef, useState, useCallback } from "react";
 import { useTranslations } from "next-intl";
+import { toast } from "sonner";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useCreateTask } from "@/hooks/use-create-task";
@@ -11,11 +12,13 @@ import { useThreadStore } from "@/stores/thread-store";
 export function ChatInput() {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { mutate: createTask, isPending } = useCreateTask();
+  const t = useTranslations("chat");
+  const { mutate: createTask, isPending } = useCreateTask({
+    onError: () => toast.error(t("createFailed")),
+  });
   const sseStatus = useSseStore((s) => s.status);
   const activeThread = useThreadStore((s) => s.getActiveThread());
   const prepareFollowUp = useThreadStore((s) => s.prepareFollowUp);
-  const t = useTranslations("chat");
 
   const isDisabled = isPending || sseStatus !== "connected";
 

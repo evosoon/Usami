@@ -41,8 +41,8 @@ export function MessageList({ messages }: MessageListProps) {
 
   return (
     <div className="relative flex-1 overflow-hidden">
-      <ScrollArea className="h-full" ref={scrollAreaRef}>
-        <div className="space-y-4 p-4" onScroll={handleScroll}>
+      <ScrollArea className="h-full" ref={scrollAreaRef} onScroll={handleScroll}>
+        <div className="space-y-4 p-4">
           {messages.map((msg) => (
             <MessageBubble key={msg.id} message={msg} />
           ))}

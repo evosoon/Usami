@@ -33,13 +33,15 @@
     "failed": "任务失败: {error}",
     "hitlWaiting": "等待您的确认...",
     "thinkingSteps": "思考过程（{count} 步）",
+    "createFailed": "任务创建失败",
     "noThreads": "暂无对话",
     "timeJustNow": "刚刚",
     "timeMinutesAgo": "{count}分钟前",
     "timeHoursAgo": "{count}小时前",
     "timeDaysAgo": "{count}天前",
     "deleteThread": "删除对话",
-    "deleteConfirm": "确认删除此对话？此操作不可恢复。"
+    "deleteConfirm": "确认删除此对话？此操作不可恢复。",
+    "deleteFailed": "删除失败"
   },
   "phase": {
     "created": "已创建",

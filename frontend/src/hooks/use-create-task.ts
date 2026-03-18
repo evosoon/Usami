@@ -4,7 +4,11 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { useThreadStore } from "@/stores/thread-store";
 
-export function useCreateTask() {
+interface UseCreateTaskOptions {
+  onError?: (error: Error) => void;
+}
+
+export function useCreateTask(options?: UseCreateTaskOptions) {
   const queryClient = useQueryClient();
   const createThread = useThreadStore((s) => s.createThread);
 
@@ -17,5 +21,6 @@ export function useCreateTask() {
       }
       queryClient.invalidateQueries({ queryKey: ["task", data.thread_id] });
     },
+    onError: options?.onError,
   });
 }

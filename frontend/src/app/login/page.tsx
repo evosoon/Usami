@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const setUser = useAuthStore((s) => s.setUser);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const t = useTranslations("auth");
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -37,7 +38,9 @@ export default function LoginPage() {
 
       const data = await res.json();
       setUser(data.user);
-      router.push("/chat");
+      // Redirect to returnUrl if present, otherwise /chat
+      const returnUrl = searchParams.get("returnUrl");
+      router.push(returnUrl && returnUrl.startsWith("/") ? returnUrl : "/chat");
     } catch (err) {
       setError(err instanceof Error ? err.message : t("loginFailed"));
     } finally {
