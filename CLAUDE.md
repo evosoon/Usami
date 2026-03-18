@@ -64,13 +64,14 @@ just env-check                  # audit .env vs .env.example
 
 ```
 config/          YAML configs (personas, tools, routing, litellm). See config/CLAUDE.md
+frontend/        Next.js 16 frontend (React 19 + Zustand + TanStack Query). See frontend/CLAUDE.md
 backend/         Python backend (FastAPI + LangGraph). See backend/CLAUDE.md
-  core/          Core business logic (11 modules)
-  agents/        Agent graphs (boss.py)
-  api/           REST + WebSocket
+  core/          Core business logic (13 modules)
+  agents/        Agent graphs (boss.py, nodes.py, prompts.py)
+  api/           REST + SSE (Server-Sent Events)
   scheduler/     Cron + event bus
   alembic/       DB migrations
-  tests/         pytest suite
+  tests/         pytest suite (10 modules, 129 cases)
 docs/            Human documentation (architecture, design decisions)
 docker-compose.yml           6 services: backend, frontend, postgres, redis, litellm, searxng
 docker-compose.override.yml  Dev overrides: frontend hot-reload (auto-merged by docker compose)

@@ -64,10 +64,17 @@ async def lifespan(app: FastAPI):
         app.state.redis_client = redis_client
         logger.info("redis_initialized")
 
-        # 初始化 EventBus (仅创建实例，MVP 暂不启动监听)
+        # 初始化 EventBus (Redis Pub/Sub for webhook-triggered tasks)
         from scheduler.events import EventBus
         app.state.event_bus = EventBus(redis_client)
         logger.info("event_bus_initialized")
+
+        # NOTE: EventBus.start_listening() subscribes to channels registered
+        # via .subscribe(). Register handlers here before starting, e.g.:
+        #   app.state.event_bus.subscribe("webhook.github", my_handler)
+        # Then start the listener as a background task:
+        #   _bus_task = _asyncio.create_task(app.state.event_bus.start_listening())
+        #   app.state._event_bus_task = _bus_task
     except Exception as e:
         logger.warning("redis_init_skipped", error=str(e))
         redis_client = None

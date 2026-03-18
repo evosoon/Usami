@@ -6,9 +6,9 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                      User / Interaction                          │
 │   Chat UI ◄──► Dashboard ◄──► (Future: Workflow Canvas)         │
-│                    React + WebSocket                             │
+│              Next.js 16 + React 19 + SSE + REST API              │
 └──────────────────────────┬──────────────────────────────────────┘
-                           │ REST API + WebSocket
+                           │ REST API + SSE
 ┌──────────────────────────▼──────────────────────────────────────┐
 │                    Control Plane                                 │
 │                                                                  │
@@ -107,7 +107,7 @@
    ├── 选择性读取关键 full_result
    └── 生成最终报告
    │
-6. → User (通过 WebSocket 实时推送)
+6. → User (通过 SSE 实时推送)
 ```
 
 ## Memory Architecture

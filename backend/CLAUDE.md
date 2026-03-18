@@ -40,7 +40,7 @@ backend/
 │   └── versions/            # Migration scripts
 └── tests/
     ├── conftest.py          # Shared fixtures (validator, hitl_gateway, app_client)
-    └── test_*.py            # 5 test modules, 70 cases
+    └── test_*.py            # 10 test modules, 129 cases
 ```
 
 ## Module dependency graph (import direction)
@@ -162,7 +162,7 @@ Checkpointer failure is non-fatal — system runs without persistence.
 - **Don't** add tools to personas.yaml without implementing them in `tool_registry.py` `BUILTIN_TOOL_MAP` — it logs a warning but the tool won't work.
 - **Don't** use `class Config:` in new Pydantic models — use `model_config = ConfigDict(...)` (V2 style). Existing `AgentState` uses deprecated V1 style.
 - **Don't** import heavy modules (langgraph, langchain) at module top level in test files — use lazy imports or ensure deps are installed.
-- **Don't** add `send_notification` tool calls — it's declared in tools.yaml but has no implementation in BUILTIN_TOOL_MAP.
+- **Don't** assign tools to personas in `personas.yaml` without verifying the tool has an implementation in `BUILTIN_TOOL_MAP` — unimplemented tools log a warning and silently fail.
 
 ## Prompt conventions
 
