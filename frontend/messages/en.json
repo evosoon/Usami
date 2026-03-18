@@ -137,6 +137,7 @@
     "pushEnabled": "Enabled",
     "pushDisabled": "Disabled",
     "enablePush": "Enable Push",
+    "disablePush": "Disable Push",
     "themeCurrent": "Current: {theme}"
   },
   "notifications": {

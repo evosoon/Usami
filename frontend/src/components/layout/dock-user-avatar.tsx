@@ -27,7 +27,11 @@ export function DockUserAvatar() {
 
   const avatarElement = (
     <Avatar size="default">
-      <AvatarImage src="/logo.svg" alt="Usami" />
+      <AvatarImage
+        src="/logo.svg"
+        alt="Usami"
+        className="dark:invert"
+      />
       <AvatarFallback>{initials}</AvatarFallback>
     </Avatar>
   );

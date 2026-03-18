@@ -137,6 +137,7 @@
     "pushEnabled": "已开启",
     "pushDisabled": "未开启",
     "enablePush": "开启推送",
+    "disablePush": "关闭推送",
     "themeCurrent": "当前: {theme}"
   },
   "notifications": {

@@ -150,7 +150,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 onClick={handlePushToggle}
                 disabled={pushLoading}
               >
-                {pushLoading ? "..." : pushEnabled ? t("pushDisabled") : t("enablePush")}
+                {pushLoading ? "..." : pushEnabled ? t("disablePush") : t("enablePush")}
               </Button>
             </div>
           </div>
