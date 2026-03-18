@@ -40,7 +40,7 @@ export function MessageList({ messages }: MessageListProps) {
   }
 
   return (
-    <div className="relative flex-1 overflow-hidden">
+    <div className="relative flex-1 overflow-hidden bg-white/85 dark:bg-zinc-900/85 backdrop-blur-xl">
       <ScrollArea className="h-full" ref={scrollAreaRef} onScroll={handleScroll}>
         <div className="space-y-4 p-4">
           {messages.map((msg) => (

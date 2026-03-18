@@ -41,7 +41,9 @@
     "timeDaysAgo": "{count}天前",
     "deleteThread": "删除对话",
     "deleteConfirm": "确认删除此对话？此操作不可恢复。",
-    "deleteFailed": "删除失败"
+    "deleteFailed": "删除失败",
+    "historyTitle": "历史对话",
+    "newChat": "新对话"
   },
   "phase": {
     "created": "已创建",
@@ -118,6 +120,10 @@
     "connected": "已连接",
     "connecting": "正在重连...",
     "disconnected": "连接已断开"
+  },
+  "userCard": {
+    "guest": "访客",
+    "connectionStatus": "连接状态"
   },
   "settings": {
     "title": "设置",
