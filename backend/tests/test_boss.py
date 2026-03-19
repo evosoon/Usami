@@ -1,6 +1,10 @@
 """
 Usami — Boss Graph 单元测试
 测试 build_boss_graph + node 函数 (mock LLM)
+
+v2 Refactor:
+- build_boss_graph no longer takes hitl_gateway and on_event params
+- Uses interrupt() for HiTL, graph topology as phase
 """
 
 from __future__ import annotations
@@ -10,7 +14,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from agents.boss import build_boss_graph
-from core.hitl import HiTLGateway
 from core.persona_factory import PersonaFactory
 from core.plan_validator import PlanValidator
 from core.state import Task, TaskPlan, TaskStatus
@@ -23,36 +26,23 @@ from core.state import Task, TaskPlan, TaskStatus
 def mock_persona_factory():
     """Mock PersonaFactory"""
     factory = MagicMock(spec=PersonaFactory)
-    factory.available_personas = ["researcher", "writer", "analyst"]
+    factory.list_personas.return_value = {
+        "researcher": {"name": "Researcher", "role": "research", "description": ""},
+        "writer": {"name": "Writer", "role": "writing", "description": ""},
+        "analyst": {"name": "Analyst", "role": "analysis", "description": ""},
+    }
     factory.get_persona.return_value = MagicMock()
     return factory
-
-
-@pytest.fixture
-def mock_hitl_gateway():
-    """Mock HiTLGateway"""
-    gateway = MagicMock(spec=HiTLGateway)
-    gateway.evaluate.return_value = None  # 不触发 HiTL
-    return gateway
-
-
-@pytest.fixture
-def mock_validator():
-    """Mock PlanValidator"""
-    validator = MagicMock(spec=PlanValidator)
-    validator.validate.return_value = (True, [])  # 默认验证通过
-    return validator
 
 
 # ============================================
 # build_boss_graph 测试
 # ============================================
 
-def test_build_boss_graph_returns_compiled_graph(mock_persona_factory, mock_hitl_gateway):
+def test_build_boss_graph_returns_compiled_graph(mock_persona_factory):
     """测试 build_boss_graph 返回编译后的 graph"""
     graph = build_boss_graph(
         persona_factory=mock_persona_factory,
-        hitl_gateway=mock_hitl_gateway,
         checkpointer=None,
     )
 
@@ -62,13 +52,12 @@ def test_build_boss_graph_returns_compiled_graph(mock_persona_factory, mock_hitl
     assert hasattr(graph, "astream")
 
 
-def test_build_boss_graph_with_checkpointer(mock_persona_factory, mock_hitl_gateway):
+def test_build_boss_graph_with_checkpointer(mock_persona_factory):
     """测试 build_boss_graph 接受 checkpointer 参数"""
     # LangGraph 要求 checkpointer 是 BaseCheckpointSaver 实例或 None
     # 这里只测试 None 情况，实际 checkpointer 需要真实实例
     graph = build_boss_graph(
         persona_factory=mock_persona_factory,
-        hitl_gateway=mock_hitl_gateway,
         checkpointer=None,
     )
 
@@ -80,7 +69,7 @@ def test_build_boss_graph_with_checkpointer(mock_persona_factory, mock_hitl_gate
 # ============================================
 
 @pytest.mark.asyncio
-async def test_boss_graph_planning_phase(mock_persona_factory, mock_hitl_gateway):
+async def test_boss_graph_planning_phase(mock_persona_factory):
     """测试 Boss Graph 的 planning 阶段 (简化版 - 仅测试 graph 构建)"""
     # boss.py 中 model_router 是通过 persona_factory.model_router 访问的
     # 完整的集成测试需要真实的 LLM 调用，这里只测试 graph 构建成功
@@ -89,7 +78,6 @@ async def test_boss_graph_planning_phase(mock_persona_factory, mock_hitl_gateway
 
     graph = build_boss_graph(
         persona_factory=mock_persona_factory,
-        hitl_gateway=mock_hitl_gateway,
         checkpointer=None,
     )
 
@@ -106,11 +94,9 @@ def test_plan_validator_integration(mock_persona_factory):
     # 测试 PlanValidator 在 build_boss_graph 中被正确初始化
     mock_model_router = MagicMock()
     mock_persona_factory.model_router = mock_model_router
-    mock_hitl_gateway = MagicMock(spec=HiTLGateway)
 
     graph = build_boss_graph(
         persona_factory=mock_persona_factory,
-        hitl_gateway=mock_hitl_gateway,
         checkpointer=None,
     )
 

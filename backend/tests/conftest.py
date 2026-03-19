@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 
-from core.hitl import HiTLGateway
 from core.plan_validator import PlanValidator
 from core.state import (
     Task,
@@ -34,11 +33,6 @@ def available_personas() -> list[str]:
 @pytest.fixture
 def validator(available_personas) -> PlanValidator:
     return PlanValidator(available_personas=available_personas)
-
-
-@pytest.fixture
-def hitl_gateway() -> HiTLGateway:
-    return HiTLGateway(budget_config={"max_cost_per_task_usd": 0.50})
 
 
 # ============================================
@@ -115,18 +109,17 @@ async def app_client():
         is_active=True,
     )
 
-    # Mock boss_graph
+    # Mock boss_graph (v2: no current_phase, no hitl_pending, no aupdate_state)
     mock_graph = AsyncMock()
-    mock_graph.ainvoke = AsyncMock(return_value={"current_phase": "done"})
+    mock_graph.ainvoke = AsyncMock(return_value={"final_result": "done"})
     mock_graph.aget_state = AsyncMock(return_value=MagicMock(
         values={
-            "current_phase": "done",
             "task_plan": None,
             "task_outputs": {},
-            "hitl_pending": [],
+            "final_result": None,
         }
     ))
-    mock_graph.aupdate_state = AsyncMock()
+    mock_graph.astream = MagicMock(return_value=iter([]))
 
     # Mock persona_factory
     mock_persona_factory = MagicMock()
@@ -143,11 +136,7 @@ async def app_client():
 
     # 注入 mock
     app.state.boss_graph = mock_graph
-    app.state.hitl_gateway = HiTLGateway()
-    app.state.active_tasks = {}
     mock_sse_manager = MagicMock()
-    mock_sse_manager.send_to_user = AsyncMock()
-    mock_sse_manager.broadcast_event = AsyncMock()
     mock_sse_manager.active_connections = 0
     app.state.sse_manager = mock_sse_manager
     app.state.persona_factory = mock_persona_factory
@@ -157,7 +146,7 @@ async def app_client():
     app.state.scheduler.get_jobs.return_value = []
     app.state.config = mock_config
 
-    # Mock event_store functions to avoid DB dependency in route tests
+    # Mock v2 task_queue and event_store functions to avoid DB dependency in route tests
     mock_persisted_event = MagicMock()
     mock_persisted_event.id = "evt_test"
     mock_persisted_event.thread_id = "thread_test"
@@ -167,11 +156,34 @@ async def app_client():
     mock_persisted_event.payload = {}
     mock_persisted_event.created_at = ""
 
+    # Mock database session
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock(return_value=MagicMock(
+        scalar=MagicMock(return_value=0),  # concurrent tasks count
+        fetchone=MagicMock(return_value=None),
+        fetchall=MagicMock(return_value=[]),
+        rowcount=1,
+    ))
+    mock_session.commit = AsyncMock()
+
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def mock_get_session():
+        yield mock_session
+
     transport = ASGITransport(app=app)
     with (
-        patch("api.routes.persist_event", new=AsyncMock(return_value=mock_persisted_event)),
+        # v2 API patches
+        patch("api.routes.get_session", new=mock_get_session),
+        patch("api.routes.persist_and_notify", new=AsyncMock(return_value=1)),
+        patch("api.routes.notify_new_task", new=AsyncMock()),
+        patch("api.routes.notify_resume_task", new=AsyncMock()),
+        # event_store patches
         patch("api.routes.get_thread_events", new=AsyncMock(return_value=[])),
         patch("api.routes.verify_thread_ownership", new=AsyncMock(return_value=True)),
+        patch("api.routes.delete_thread", new=AsyncMock(return_value=1)),
+        patch("api.routes.list_user_threads", new=AsyncMock(return_value=[])),
     ):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             yield client, mock_graph

@@ -6,6 +6,14 @@ import type { SseEvent } from "@/types/sse";
 type EventHandler = (event: SseEvent) => void;
 type StatusHandler = (status: "connecting" | "connected" | "disconnected") => void;
 
+/**
+ * UsamiSSE — v2 SSE Client
+ *
+ * v2 Changes:
+ * - Uses last_seq query param instead of last_event_id (更精确)
+ * - Supports new event types: phase.change, llm.token, interrupt
+ * - Last-Event-ID header still works (browser auto-sends on reconnect)
+ */
 export class UsamiSSE {
   private es: EventSource | null = null;
   private baseUrl: string;
@@ -15,7 +23,7 @@ export class UsamiSSE {
   private maxReconnectDelay = 30000;
   private shouldReconnect = true;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private lastEventId: string | null = null;
+  private lastSeq = 0;
 
   constructor(url: string) {
     this.baseUrl = url;
@@ -25,11 +33,11 @@ export class UsamiSSE {
     this.shouldReconnect = true;
     this.notifyStatus("connecting");
 
-    // Build URL with last_event_id for replay on reconnect
+    // Build URL with last_seq for replay on reconnect (v2)
     let url = this.baseUrl;
-    if (this.lastEventId) {
+    if (this.lastSeq > 0) {
       const sep = url.includes("?") ? "&" : "?";
-      url = `${url}${sep}last_event_id=${encodeURIComponent(this.lastEventId)}`;
+      url = `${url}${sep}last_seq=${this.lastSeq}`;
     }
 
     const es = new EventSource(url, { withCredentials: true });
@@ -54,12 +62,27 @@ export class UsamiSSE {
     for (const eventType of SSE_EVENT_TYPES) {
       es.addEventListener(eventType, (e: MessageEvent) => {
         try {
-          const data = JSON.parse(e.data);
-          // Store last event ID for replay
+          const rawData = JSON.parse(e.data);
+
+          // Store last event ID/seq for replay (v2: use numeric seq)
           if (e.lastEventId) {
-            this.lastEventId = e.lastEventId;
+            const seq = parseInt(e.lastEventId, 10);
+            if (!isNaN(seq) && seq > this.lastSeq) {
+              this.lastSeq = seq;
+            }
           }
-          const event: SseEvent = { type: eventType, ...data };
+
+          // v2: Backend sends { type, data: {...} } — extract from nested data
+          const payload = rawData.data || rawData;
+          const threadId = payload.thread_id || rawData.thread_id || "";
+
+          const event: SseEvent = {
+            type: eventType,
+            thread_id: threadId,
+            seq: e.lastEventId ? parseInt(e.lastEventId, 10) : undefined,
+            ...payload,
+          } as SseEvent;
+
           this.handlers.forEach((h) => h(event));
         } catch {
           // Ignore malformed messages
@@ -89,6 +112,16 @@ export class UsamiSSE {
   onStatus(handler: StatusHandler): () => void {
     this.statusHandlers.add(handler);
     return () => this.statusHandlers.delete(handler);
+  }
+
+  /** Reset last_seq to 0 (for fresh connection without replay) */
+  resetSeq(): void {
+    this.lastSeq = 0;
+  }
+
+  /** Get current last received seq */
+  getLastSeq(): number {
+    return this.lastSeq;
   }
 
   private notifyStatus(status: "connecting" | "connected" | "disconnected"): void {

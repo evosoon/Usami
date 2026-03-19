@@ -53,7 +53,7 @@ export function HiTLDialog({ request, threadId, open, onClose }: HiTLDialogProps
         </DialogHeader>
 
         {/* Context display */}
-        {Object.keys(request.context).length > 0 && (
+        {request.context && Object.keys(request.context).length > 0 && (
           <div className="rounded-md bg-muted p-3 text-sm">
             <pre className="whitespace-pre-wrap text-xs">
               {JSON.stringify(request.context, null, 2)}
@@ -71,7 +71,7 @@ export function HiTLDialog({ request, threadId, open, onClose }: HiTLDialogProps
 
         {/* Decision buttons */}
         <DialogFooter className="flex-wrap gap-2">
-          {request.options.map((option) => (
+          {(request.options ?? []).map((option) => (
             <Button
               key={option}
               onClick={() => handleDecision(option)}

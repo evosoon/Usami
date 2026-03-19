@@ -68,7 +68,8 @@ async function request<T>(path: string, options?: RequestInit, _retried = false)
 export interface ThreadSummary {
   thread_id: string;
   intent: string;
-  latest_phase: string;
+  status: string;  // Backend returns 'status' as the phase
+  latest_phase?: string;  // May not be present in API response
   result: string | null;
   created_at: string;
   updated_at: string;

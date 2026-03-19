@@ -75,6 +75,58 @@ export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
       const id = `${thread.threadId}-${i}`;
 
       switch (event.type) {
+        // === v2 事件类型 ===
+        case "phase.change": {
+          const phase = event.phase;
+          if (phase === "planning") {
+            currentSteps.push({ id, label: t("analyzing"), status: "active" });
+          } else if (phase === "planned") {
+            markPrevActive(currentSteps, "done");
+            const taskCount = event.task_count ?? 0;
+            currentSteps.push({ id, label: t("planReady", { count: taskCount }), status: "active" });
+          } else if (phase === "executing") {
+            markPrevActive(currentSteps, "done");
+            const tasks = event.tasks as string[] | undefined;
+            const label = tasks?.length ? t("executingTasks", { count: tasks.length }) : t("executing", { persona: "" });
+            currentSteps.push({ id, label, status: "active" });
+          } else if (phase === "aggregating") {
+            markPrevActive(currentSteps, "done");
+            currentSteps.push({ id, label: t("aggregating"), status: "active" });
+          } else if (phase === "completed") {
+            markPrevActive(currentSteps, "done");
+          }
+          break;
+        }
+
+        case "task.completed_single":
+          // 单个子任务完成 — 更新进度
+          markPrevActive(currentSteps, "done");
+          currentSteps.push({
+            id,
+            label: t("taskDone", { task: event.task_id, persona: event.persona }),
+            status: "done",
+          });
+          break;
+
+        case "task.failed_single":
+          markPrevActive(currentSteps, "error");
+          currentSteps.push({
+            id,
+            label: t("taskFailed", { task: event.task_id, error: event.error }),
+            status: "error",
+          });
+          break;
+
+        case "node.completed":
+          // 图节点完成 — 可选显示（通常跳过）
+          break;
+
+        case "interrupt":
+          markPrevActive(currentSteps, "done");
+          currentSteps.push({ id, label: t("hitlWaiting"), status: "active" });
+          break;
+
+        // === Legacy 事件类型 (向后兼容) ===
         case "task.created":
           // Flush any pending thinking steps from previous turn (for follow-ups)
           flushThinkingSteps(id);
@@ -121,7 +173,7 @@ export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
 
         case "task.failed":
           markPrevActive(currentSteps, "error");
-          currentSteps.push({ id, label: t("failed", { error: event.error }), status: "error" });
+          currentSteps.push({ id, label: t("failed", { error: event.error ?? "unknown" }), status: "error" });
           break;
 
         case "hitl.request":

@@ -1,182 +1,298 @@
 # backend/
 
-FastAPI + LangGraph multi-agent backend.
+FastAPI + LangGraph multi-agent backend (v2 architecture).
+
+## v2 Architecture Overview
+
+The v2 refactor introduces a **Worker-driven model** where task execution is decoupled from the API process:
+
+```
+┌─────────────────┐         ┌─────────────────┐
+│   API Process   │         │  Worker Process │
+│  (FastAPI)      │         │  (LangGraph)    │
+│                 │         │                 │
+│  POST /tasks ───┼──pg_notify──►  LISTEN     │
+│                 │         │       │         │
+│  GET /events ◄──┼─────────┼── astream()     │
+│   (SSE)         │         │                 │
+└────────┬────────┘         └────────┬────────┘
+         │                           │
+         │      PostgreSQL           │
+         └──────────┬────────────────┘
+                    │
+            ┌───────┴───────┐
+            │  events table │  ← Single source of truth
+            │  tasks table  │
+            │  checkpoints  │
+            └───────────────┘
+```
+
+### Key Principles
+
+| Principle | Implementation |
+|-----------|---------------|
+| **PostgreSQL is single source of truth** | All state in DB, `kill -9` Worker → restart recovers |
+| **Reliable event delivery** | Disconnect → reconnect → replay from `last_seq` |
+| **Idempotent mutations** | CAS (`UPDATE WHERE status='expected'`), dedup by seq |
+
+### Framework Primitives (v2)
+
+| Capability | v1 (Manual) | v2 (Framework) |
+|-----------|-------------|----------------|
+| State machine | `current_phase` string | Graph topology IS the phase |
+| HiTL | `hitl_pending` list + polling | `interrupt()` + `Command(resume=)` |
+| Streaming | `emit()` closure passthrough | `get_stream_writer()` |
+| Persistence | In-memory `active_tasks` | PostgreSQL + Checkpoint |
 
 ## Directory structure
 
 ```
 backend/
-├── main.py                  # FastAPI entry + lifespan (init chain)
+├── main.py                  # FastAPI entry + lifespan (v2: no task execution)
 ├── Dockerfile
-├── requirements.txt
+├── pyproject.toml / uv.lock
 ├── pytest.ini / alembic.ini
+├── worker/
+│   ├── __init__.py
+│   └── main.py              # Worker process: pg_notify consumer + graph executor
 ├── core/
-│   ├── state.py             # ALL Pydantic models (Task, TaskPlan, TaskOutput, HiTL*, AgentState)
-│   ├── protocols.py         # Abstract interfaces (escape hatch from LangGraph)
+│   ├── state.py             # BossState (TypedDict + Annotated reducers), Task, TaskPlan, TaskOutput
+│   ├── task_queue.py        # pg_notify helpers (notify_new_task, persist_and_notify)
 │   ├── config.py            # YAML + env loader -> AppConfig
 │   ├── persona_factory.py   # YAML -> LangGraph ReAct agents
 │   ├── tool_registry.py     # Multi-source tool loading (builtin + MCP + skill)
 │   ├── model_router.py      # Task-type routing + CircuitBreaker + retry
 │   ├── plan_validator.py    # Deterministic DAG validation of Boss output
-│   ├── hitl.py              # HiTL gateway (confidence/cost/retry triggers)
-│   ├── memory.py            # SQLAlchemy models + DB init (Alembic)
-│   ├── event_store.py       # Event persistence and retrieval (persist_event, get_thread_events, list_user_threads)
-│   ├── auth.py              # JWT auth, password hashing, FastAPI dependencies, admin seed
+│   ├── hitl.py              # HiTL evaluation logic (confidence/cost thresholds)
+│   ├── memory.py            # SQLAlchemy models: Task, ResumeRequest, Event, User, etc.
+│   ├── event_store.py       # Event retrieval (get_thread_events, list_user_threads)
+│   ├── auth.py              # JWT auth, password hashing, FastAPI dependencies
 │   └── push.py              # Web Push notifications via pywebpush (VAPID)
 ├── agents/
-│   ├── boss.py              # Boss supervisor graph builder (StateGraph assembly + compile)
-│   ├── nodes.py             # Boss graph node functions (planning, validate, execute, aggregate)
-│   └── prompts.py           # All prompt templates and message constants (Boss + HiTL)
+│   ├── boss.py              # Boss graph builder: 5-node topology (plan→validate→execute→review→aggregate)
+│   ├── nodes.py             # Node functions with interrupt() and get_stream_writer()
+│   └── prompts.py           # All prompt templates and message constants
 ├── api/
-│   ├── routes.py            # REST endpoints (tasks, threads, HiTL, cancel)
-│   ├── sse.py               # SSE endpoint + SSEConnectionManager (per-user directed event routing)
-│   ├── auth_routes.py       # Auth endpoints (login, refresh, logout) — httpOnly cookies
+│   ├── routes.py            # REST endpoints (v2: DB writes + pg_notify, no graph execution)
+│   ├── sse.py               # SSE endpoint (v2: dual-channel pg LISTEN + Redis subscribe)
+│   ├── auth_routes.py       # Auth endpoints (login, refresh, logout)
 │   ├── admin_routes.py      # Admin CRUD endpoints
-│   └── notification_routes.py # Push subscription endpoints (subscribe, unsubscribe, VAPID key)
+│   └── notification_routes.py # Push subscription endpoints
 ├── scheduler/
 │   ├── cron.py              # APScheduler cron jobs
 │   └── events.py            # Redis pub/sub event bus
 ├── alembic/
-│   └── versions/            # Migration scripts
+│   └── versions/            # Migration scripts (006: tasks + resume_requests)
 └── tests/
-    ├── conftest.py          # Shared fixtures (validator, hitl_gateway, app_client)
-    └── test_*.py            # 10 test modules, 129 cases
+    ├── conftest.py          # Shared fixtures
+    └── test_*.py            # Test modules
 ```
 
-## Module dependency graph (import direction)
+## v2 Graph Topology (5 Nodes)
 
 ```
-state.py          <- (no deps, pure Pydantic — foundation of everything)
-config.py         <- (reads YAML + env, no core deps)
-memory.py         <- state.py (SQLAlchemy models mirror Pydantic)
-model_router.py   <- (standalone, uses langchain_openai)
-tool_registry.py  <- (standalone, uses langchain_core.tools)
+START → plan → validate → execute → review → route_after_review
+                            ↑                       │
+                            └───────────────────────┘ (has ready tasks)
+                                                    │
+                                               aggregate → END
+```
+
+| Node | Responsibility | Interrupt? |
+|------|---------------|------------|
+| `plan` | Parse intent, generate TaskPlan | Yes (parse failure) |
+| `validate` | DAG validation, optional preview | Yes (validation error, preview) |
+| `execute` | Parallel task execution (asyncio.gather) | **No** (isolation) |
+| `review` | Check failed tasks, trigger HiTL | Yes (failed tasks) |
+| `aggregate` | Summarize results, generate report | No |
+
+**Critical**: `execute` node NEVER calls `interrupt()` — this avoids conflicts with `asyncio.gather()`. The `review` node is the **interrupt isolation layer**.
+
+## State Management (BossState)
+
+```python
+class BossState(TypedDict, total=False):
+    user_intent: str
+    thread_id: str
+    task_plan: TaskPlan | None
+    task_outputs: Annotated[dict, merge_task_outputs]   # merge reducer
+    completed_task_ids: Annotated[list, operator.add]   # append-only reducer
+    final_result: str | None
+    previous_result: str | None  # for follow-up context
+```
+
+**Reducer behavior**:
+- `task_outputs`: Merges dicts (parallel-safe)
+- `completed_task_ids`: Append-only (cannot remove items)
+
+**Limitation**: `retry_failed` is not supported in MVP because `operator.add` is append-only. Failed task IDs cannot be removed from `completed_task_ids`.
+
+## Dual-Channel Event Dispatch
+
+| Channel | Events | Characteristics |
+|---------|--------|-----------------|
+| **PostgreSQL + pg_notify** | `phase.change`, `interrupt`, `task.completed`, `task.failed`, `node.completed` | Has `seq`, replayable, persisted |
+| **Redis pub/sub** | `llm.token` | No `seq`, transient, fire-and-forget |
+
+```python
+# In worker/main.py
+PERSISTENT_EVENTS = {"phase.change", "task.completed_single", "task.failed_single",
+                     "interrupt", "task.completed", "task.failed", "task.created", "node.completed"}
+
+if is_persistent_event(event_type):
+    await persist_and_notify(pool, thread_id, user_id, event_data)  # PostgreSQL
+else:
+    await redis.publish(f"stream:{user_id}", json.dumps(event_data))  # Redis
+```
+
+**pg_notify payload limit**: Only pass references (`seq`, `thread_id`, `type`) — full event data in `events` table.
+
+## SSE Timing Protocol
+
+```
+T0: LISTEN events:{user_id}          ← Listen first
+T1: SELECT ... WHERE seq > last_seq  ← Then query history
+T2: yield missed events              ← Replay
+T3: Worker produces event N          ← Real-time via pg_notify
+T4: queue.get() → dedup → yield      ← No loss, no duplicates
+```
+
+**Order matters**: "LISTEN first, query later" prevents race condition event loss.
+
+## API Endpoints (v2)
+
+| Endpoint | v1 Behavior | v2 Behavior |
+|----------|-------------|-------------|
+| `POST /tasks` | `asyncio.create_task(graph.ainvoke())` | `INSERT tasks` + `pg_notify('new_task')` |
+| `POST /tasks/{id}/resume` | `graph.aupdate_state()` + `ainvoke()` | CAS `interrupted→resuming` + `INSERT resume_requests` + `pg_notify('resume_task')` |
+| `GET /tasks/{id}` | `graph.aget_state()` | Query `tasks` table + `events` table |
+
+## Worker Process
+
+```bash
+# Run worker
+python -m worker.main
+# Or via Docker
+docker compose up worker
+```
+
+**Worker responsibilities**:
+1. `LISTEN new_task, resume_task` channels
+2. CAS claim task (`UPDATE WHERE status='pending'`)
+3. `graph.astream()` with `stream_mode=["messages", "updates", "custom"]`
+4. Dispatch chunks to dual channels
+5. `finalize_task()`: check interrupt, update status
+6. `recover_orphaned_tasks()`: resume on startup
+
+## Module dependency graph
+
+```
+state.py          <- (no deps, TypedDict + Pydantic)
+task_queue.py     <- (standalone, pg_notify helpers)
+config.py         <- (reads YAML + env)
+memory.py         <- state.py (SQLAlchemy: Task, ResumeRequest, Event)
+model_router.py   <- (standalone)
+tool_registry.py  <- (standalone)
 plan_validator.py <- state.py
 hitl.py           <- state.py
-event_store.py    <- state.py, memory.py (Event model, PersistedEvent)
-auth.py           <- state.py, memory.py (User model)
-push.py           <- config.py, memory.py (PushSubscription model)
+event_store.py    <- state.py, memory.py
+auth.py           <- state.py, memory.py
+push.py           <- config.py, memory.py
 persona_factory.py <- tool_registry, model_router
-prompts.py        <- (no deps, pure string constants)
-nodes.py          <- state, plan_validator, hitl, persona_factory, prompts
-boss.py           <- nodes (graph builder only)
-routes.py         <- state, event_store (HiTLResponse, persist_event)
-sse.py            <- state, event_store, auth (SSEConnectionManager, SSE endpoint)
-main.py           <- everything
+prompts.py        <- (no deps, pure constants)
+nodes.py          <- state, plan_validator, persona_factory, prompts
+boss.py           <- nodes (graph builder)
+routes.py         <- state, task_queue, event_store
+sse.py            <- state, event_store, auth
+worker/main.py    <- boss, task_queue, persona_factory
+main.py           <- everything except worker
 ```
 
-**Rule**: `core/` never imports from `agents/`, `api/`, or `scheduler/`.
+**Rule**: `core/` never imports from `agents/`, `api/`, `scheduler/`, or `worker/`.
 
-## Key constraints
+## Key Constraints
 
-### boss.py uses StateGraph(dict), NOT AgentState
+### BossState uses TypedDict with Annotated reducers
 
 ```python
-graph = StateGraph(dict)  # boss.py
+graph = StateGraph(BossState)  # Not StateGraph(dict)
 ```
 
-**Critical**: `StateGraph(dict)` **replaces** state on each node return (no merge). Every node function must return `{**state, ...updates}` to preserve keys like `thread_id` and `user_intent` across nodes. Omitting `**state` causes downstream nodes to lose these values.
-
-Checkpoint values are plain dicts. When reading state via `aget_state()`, fields like `task_plan` may be dict or Pydantic. Always handle both:
-
-```python
-plan_dict = task_plan.model_dump() if hasattr(task_plan, "model_dump") else task_plan
-```
+Nodes return **partial dicts** — reducers merge into full state. No need for `{**state, ...updates}` pattern.
 
 ### User-facing strings are in Chinese
 
-User-facing strings remain Chinese per language rules. LLM prompt templates are English.
-
-**Chinese** (user-facing, do not translate):
-- `plan_validator.py` error messages: `"任务计划为空"`, `"存在重复的任务 ID"`, `"不存在的 Persona"`, `"依赖不存在的任务"`, `"检测到循环依赖"`
-- `hitl.py` titles, descriptions, and options
-- `tool_registry.py` tool return messages
+- `plan_validator.py` error messages
+- `hitl.py` titles, descriptions, options
 - `agents/prompts.py` `HITL_*` constants
 
-**English** (LLM instructions):
-- `agents/prompts.py` `BOSS_*`, `TASK_*`, `*_SYSTEM_MESSAGE` constants
-- `config/personas.yaml` system_prompt and description fields
-- `config/tools.yaml` tool descriptions
+### HiTL thresholds (in nodes.py review_node)
 
-Tests must assert against the exact Chinese strings in plan_validator.py.
+| Trigger | Condition |
+|---------|-----------|
+| Failed task | `confidence < 0.6` |
 
-### HiTL trigger thresholds (hardcoded in hitl.py)
-
-| Trigger | Condition | Type |
-|---|---|---|
-| Low confidence | `< 0.6` | CLARIFICATION |
-| Cost alert | `>= budget * 0.80` | APPROVAL |
-| Retry exhaustion | `>= 2` | ERROR |
-
-Evaluation order matters: confidence -> cost -> retry. First match wins.
-
-### Confidence values are hardcoded in boss.py
-
-- Success: `0.8` (won't trigger HiTL)
-- Failure: `0.0` (always triggers)
-- Final aggregation: `1.0`
-
-### main.py lifespan initialization order
+### main.py lifespan (v2)
 
 ```
-config -> database -> auth -> push -> tool_registry -> persona_factory -> hitl_gateway
--> sse_manager -> checkpointer (optional, may fail) -> boss_graph -> scheduler
+config -> database -> auth -> push -> redis -> tool_registry -> persona_factory
+-> hitl_gateway -> sse_manager -> checkpointer -> boss_graph -> scheduler
 ```
 
-Checkpointer failure is non-fatal — system runs without persistence.
+**Note**: API process builds `boss_graph` for health checks and scheduler, but does NOT execute tasks.
 
 ### Authentication
 
-`core/auth.py` uses module-level globals initialized once at startup via `init_auth(config)`.
+Same as before — httpOnly cookies, `get_current_user` dependency.
 
-- **Token lifecycle**: Access token (24h, httpOnly cookie) + Refresh token (7d, httpOnly cookie). No tokens in JSON response bodies.
-- **Dependencies**: `get_current_user` (extracts user from `access_token` cookie) and `require_admin` (checks `UserRole.ADMIN`).
-- **Password hashing**: bcrypt via `hash_password()` / `verify_password()`.
-- **Admin seeding**: `seed_admin_user()` creates admin from `ADMIN_EMAIL`/`ADMIN_PASSWORD` env vars if not exists. Called during lifespan startup.
+## Testing
 
-### API request/response models live in routes.py
+```bash
+# Run tests (from backend/)
+uv run python -m pytest tests/ -v --tb=short
 
-`TaskRequest`, `TaskResponse`, `HiTLResolveRequest` are in `api/routes.py`, not `core/state.py`. This is intentional — API models are separate from domain models.
+# With coverage
+uv run python -m pytest tests/ -v --cov=core --cov=api --cov-report=term-missing
+```
 
-## Testing rules
+**v2 test changes**:
+- `app_client` fixture mocks `get_session`, `persist_and_notify`, `notify_new_task`
+- Task creation returns `status: "pending"` (not `"running"`)
+- Some integration tests skipped (require real DB for CAS)
 
-- **Run tests**: `uv run python -m pytest backend/tests/ -v --tb=short` (From the project root directory). Never use bare `python`/`python3` — system Python lacks project deps.
-- **With coverage**: `uv run python -m pytest backend/tests/ -v --cov=core --cov=api --cov-report=term-missing`
-- Fixtures in `conftest.py`: reuse `validator`, `hitl_gateway`, `simple_plan`, `task_output_*`, `app_client`.
-- `app_client` fixture mocks `boss_graph`, `persona_factory`, `config`, `tool_registry`, `scheduler`. Imports `from main import app` — requires all transitive deps installed.
-- `asyncio_mode = auto` in pytest.ini — no need for `@pytest.mark.asyncio` on test functions using async fixtures.
-- For new core module tests: add fixture in conftest, create `tests/test_<module>.py`.
-- For new API endpoint tests: add to `tests/test_routes.py`, use `app_client` fixture.
+## Database (v2 additions)
 
-## Database migrations
+New tables in `006_add_tasks_and_resume_requests.py`:
 
-- Models in `core/memory.py` (SQLAlchemy): `TaskLog`, `HiTLEventLog`, `RoutingLog`, `User`, `PushSubscription`, `Event`.
-- `init_database()` runs `alembic upgrade head` (sync, blocks briefly at startup).
-- `init_database_for_tests()` uses `create_all()` — fast, skips Alembic.
-- New table: add SQLAlchemy model in `memory.py`, then `alembic revision --autogenerate`.
-- Alembic env.py converts `postgresql://` to `postgresql+psycopg://` (sync driver).
+```sql
+-- Task state (replaces in-memory active_tasks)
+CREATE TABLE tasks (
+    thread_id   VARCHAR(64) PRIMARY KEY,
+    user_id     VARCHAR(64) NOT NULL,
+    intent      TEXT NOT NULL,
+    status      VARCHAR(20) DEFAULT 'pending',  -- pending/running/interrupted/resuming/completed/failed
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
 
-## Common pitfalls
+-- HiTL resume requests (crash recovery)
+CREATE TABLE resume_requests (
+    id            SERIAL PRIMARY KEY,
+    thread_id     VARCHAR(64) NOT NULL,
+    resume_value  JSONB NOT NULL,
+    consumed      BOOLEAN DEFAULT false,
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+```
 
-- **Don't** call `boss_graph.ainvoke()` without `config={"configurable": {"thread_id": ...}}` — checkpoint requires thread_id.
-- **Don't** add tools to personas.yaml without implementing them in `tool_registry.py` `BUILTIN_TOOL_MAP` — it logs a warning but the tool won't work.
-- **Don't** use `class Config:` in new Pydantic models — use `model_config = ConfigDict(...)` (V2 style). Existing `AgentState` uses deprecated V1 style.
-- **Don't** import heavy modules (langgraph, langchain) at module top level in test files — use lazy imports or ensure deps are installed.
-- **Don't** assign tools to personas in `personas.yaml` without verifying the tool has an implementation in `BUILTIN_TOOL_MAP` — unimplemented tools log a warning and silently fail.
+## Common Pitfalls (v2)
+
+- **Don't** call `interrupt()` inside `asyncio.gather()` — use review node as isolation layer
+- **Don't** expect `retry_failed` to work — `operator.add` reducer is append-only
+- **Don't** put full event data in pg_notify payload — 8KB limit, use references only
+- **Don't** query before LISTEN in SSE — causes event loss race condition
+- **Don't** read `intent` from pg_notify payload — Worker reads from `tasks` table
 
 ## Prompt conventions
 
-All LLM prompt templates live in `agents/prompts.py`. No inline prompt strings in boss.py or other agent files.
-
-### Rules
-- **Language**: All prompt templates in English. LLM output language is NOT hardcoded — the LLM responds in the user's language naturally.
-- **User-facing strings** (HiTL titles, options, error messages shown to users): Chinese. Prefixed with `HITL_*` in prompts.py.
-- **Naming**: `UPPER_SNAKE_CASE` constants. Group by function: `BOSS_*` for boss prompts, `HITL_*` for HiTL messages, `TASK_*` for task execution.
-- **Template variables**: Use `{variable_name}` (Python str.format). Document each variable in a comment above the constant.
-- **No output language instruction**: Do NOT add "respond in Chinese" or "respond in English" to prompts. Let the LLM follow the user's language.
-- **Separation**: Prompts contain zero Python logic. boss.py contains zero prompt text.
-
-### Adding a new prompt
-1. Define constant in `agents/prompts.py`
-2. Import in the agent file that uses it
-3. Use `.format()` to fill template variables
+Same as before — all templates in `agents/prompts.py`, English for LLM instructions, Chinese for user-facing strings.

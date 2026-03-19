@@ -18,7 +18,27 @@ services:
       - ./backend:/app
       - ./config:/app/config
       - backend_venv:/app/.venv
-    command: sh -c "uv sync --frozen --no-dev && uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+    command: sh -c "uv sync --frozen --no-dev && uv run uvicorn main:app --host 0.0.0.0 --port 8000"
+
+  # === Worker (LangGraph Task Executor) ===
+  worker:
+    build: ./backend
+    env_file:
+      - .env.example
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - ./config:/app/config
+      - backend_venv:/app/.venv
+    command: sh -c "uv sync --frozen --no-dev && uv run python -m worker.main"
+    restart: unless-stopped
 
   # === Frontend ===
   frontend:

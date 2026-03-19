@@ -26,10 +26,10 @@ export interface HiTLRequest {
   hitl_type: HiTLType;
   title: string;
   description: string;
-  context: Record<string, unknown>;
-  options: string[];
-  task_id: string | null;
-  persona: string | null;
+  context?: Record<string, unknown>;
+  options?: string[];
+  task_id?: string | null;
+  persona?: string | null;
 }
 
 // API request/response models (mirror api/routes.py)
