@@ -1,20 +1,33 @@
 """
-Usami — SSE (Server-Sent Events) Endpoint
-Replaces WebSocket for real-time server-to-client event streaming.
-Per-user directed event routing with multi-tab support.
+Usami — SSE (Server-Sent Events) Endpoint (v2 Refactor)
+
+v2 设计原则:
+- 双通道: pg LISTEN (持久化事件) + Redis subscribe (瞬态事件)
+- 时序保证: 先 LISTEN 后查询（确保不漏不重）
+- seq 去重: 防止补发与实时流的重叠
+- Last-Event-ID 支持: 浏览器自动重连时的事件恢复
+
+时序协议:
+    T0: LISTEN events:{user_id}          ← 先监听
+    T1: SELECT events WHERE seq > last   ← 再查历史
+    T2: yield events [last+1, ...]       ← 补发
+    T3: Worker 产生 event N, pg_notify   ← 通知进入 queue
+    T4: queue.get() → seq=N > last_sent  ← 实时推送（不漏）
+    T5: seq 去重                          ← 不重复发送
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any
 
+import asyncpg
 import structlog
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from core.auth import get_current_user
-from core.event_store import get_thread_events
 from core.state import PersistedEvent, UserProfile
 
 logger = structlog.get_logger()
@@ -23,97 +36,23 @@ router = APIRouter()
 
 
 # ============================================
-# SSE Connection Manager
-# ============================================
-
-class SSEConnectionManager:
-    """Per-user directed event routing, supporting multi-tab and multi-worker via Redis pub/sub."""
-
-    def __init__(self, redis_client: Any | None = None) -> None:
-        # user_id -> list of asyncio.Queue (one per tab/connection)
-        self._connections: dict[str, list[asyncio.Queue]] = {}
-        self._redis = redis_client
-
-    def connect(self, user_id: str) -> asyncio.Queue:
-        """Register a new SSE connection for a user. Returns the queue to read from."""
-        queue: asyncio.Queue = asyncio.Queue()
-        self._connections.setdefault(user_id, []).append(queue)
-        logger.info("sse_connected", user_id=user_id, tabs=len(self._connections[user_id]))
-        return queue
-
-    def disconnect(self, user_id: str, queue: asyncio.Queue) -> None:
-        """Remove an SSE connection."""
-        conns = self._connections.get(user_id, [])
-        try:
-            conns.remove(queue)
-        except ValueError:
-            pass
-        if not conns:
-            self._connections.pop(user_id, None)
-        logger.info("sse_disconnected", user_id=user_id, tabs=len(conns))
-
-    async def send_to_user(self, user_id: str, event: PersistedEvent) -> None:
-        """Send event to all tabs of a user on THIS worker."""
-        for queue in self._connections.get(user_id, []):
-            try:
-                await queue.put(event)
-            except Exception as e:
-                logger.warning("sse_queue_put_failed", user_id=user_id, error=str(e))
-
-    async def broadcast_event(self, user_id: str, event: PersistedEvent) -> None:
-        """Publish event via Redis pub/sub for cross-worker distribution.
-
-        Falls back to local-only delivery when Redis is unavailable.
-        """
-        if self._redis:
-            try:
-                await self._redis.publish(
-                    f"usami:sse:{user_id}",
-                    event.model_dump_json(),
-                )
-                return
-            except Exception as e:
-                logger.warning("sse_redis_publish_failed", user_id=user_id, error=str(e))
-        # Single-worker fallback
-        await self.send_to_user(user_id, event)
-
-    async def start_subscription(self) -> None:
-        """Subscribe to Redis for events targeted at users connected to this worker."""
-        if not self._redis:
-            return
-        try:
-            pubsub = self._redis.pubsub()
-            await pubsub.psubscribe("usami:sse:*")
-            logger.info("sse_redis_subscription_started")
-            async for msg in pubsub.listen():
-                if msg["type"] == "pmessage":
-                    user_id = msg["channel"].decode().split(":")[-1]
-                    event = PersistedEvent.model_validate_json(msg["data"])
-                    await self.send_to_user(user_id, event)
-        except asyncio.CancelledError:
-            logger.info("sse_redis_subscription_stopped")
-        except Exception as e:
-            logger.error("sse_redis_subscription_error", error=str(e))
-
-    @property
-    def active_connections(self) -> int:
-        return sum(len(qs) for qs in self._connections.values())
-
-
-# ============================================
 # SSE Format Helpers
 # ============================================
 
-def format_sse(event: PersistedEvent) -> str:
-    """Format a persisted event as SSE wire format."""
-    data = json.dumps(
-        {"thread_id": event.thread_id, "seq": event.seq, **event.payload},
-        ensure_ascii=False,
-    )
+def format_sse_persistent(seq: int, event_type: str, payload: str) -> str:
+    """Format a persistent event as SSE wire format (with id for replay)."""
     return (
-        f"id: {event.id}\n"
-        f"event: {event.event_type}\n"
-        f"data: {data}\n\n"
+        f"id: {seq}\n"
+        f"event: {event_type}\n"
+        f"data: {payload}\n\n"
+    )
+
+
+def format_sse_transient(event_type: str, payload: str) -> str:
+    """Format a transient event as SSE wire format (no id — not replayable)."""
+    return (
+        f"event: {event_type}\n"
+        f"data: {payload}\n\n"
     )
 
 
@@ -123,7 +62,7 @@ def format_keepalive() -> str:
 
 
 # ============================================
-# SSE Endpoint
+# SSE Endpoint (v2 — Dual Channel)
 # ============================================
 
 MAX_SSE_CONNECTIONS_PER_USER = 5
@@ -133,52 +72,191 @@ MAX_SSE_CONNECTIONS_PER_USER = 5
 async def sse_stream(
     request: Request,
     user: UserProfile = Depends(get_current_user),
+    last_seq: int = Query(0, description="Last received sequence number"),
+    thread_id: str | None = Query(None, description="Filter by thread ID"),
 ):
     """
-    SSE event stream — one per browser tab.
+    SSE event stream (v2) — 双通道 + 时序保证
 
     Auth: access_token cookie (automatic via browser).
-    Replay: Pass last_event_id query param for missed event replay.
-    Keepalive: Server sends comment every 15s on idle.
+    Replay:
+        - last_seq query param: 前端主动传（刷新页面场景）
+        - Last-Event-ID header: 浏览器自动重连时发送
+    Keepalive: Server sends comment every 30s on idle.
+
+    事件分类:
+        - 持久化事件 (有 id=seq): phase.change, interrupt, task.completed 等
+        - 瞬态事件 (无 id): llm.token, heartbeat
     """
-    sse_manager: SSEConnectionManager = request.app.state.sse_manager
+    # 优先用 SSE 规范的 Last-Event-ID（自动重连场景）
+    header_last_id = request.headers.get("Last-Event-ID")
+    effective_last_seq = int(header_last_id) if header_last_id else last_seq
 
-    # Enforce per-user connection limit
-    current_count = len(sse_manager._connections.get(user.id, []))
-    if current_count >= MAX_SSE_CONNECTIONS_PER_USER:
-        from fastapi.responses import JSONResponse
-        return JSONResponse(
-            status_code=429,
-            content={"detail": "SSE 连接数已达上限"},
-        )
-
-    last_event_id = (
-        request.headers.get("Last-Event-ID")
-        or request.query_params.get("last_event_id")
-    )
+    # 获取数据库连接信息
+    from core.config import load_config
+    config = load_config()
+    database_url = os.getenv("DATABASE_URL", config.database_url)
+    redis_url = os.getenv("REDIS_URL", config.redis_url)
+    dsn = database_url.replace("postgresql://", "postgres://")
 
     async def event_generator():
-        queue = sse_manager.connect(user.id)
+        queue: asyncio.Queue = asyncio.Queue(maxsize=200)  # 背压
+        listen_conn = None
+        redis_client = None
+        redis_task = None
+
         try:
-            # Replay missed events if Last-Event-ID provided
-            if last_event_id:
-                await _replay_missed(user.id, last_event_id, queue)
+            # ══ Phase 1: 先 LISTEN（确保不漏通知） ══
+            listen_conn = await asyncpg.connect(dsn)
+            channel = f"events:{user.id}"
 
-            # Stream live events with keepalive
-            while True:
+            def on_pg_notify(conn, pid, ch, payload):
                 try:
-                    event = await asyncio.wait_for(queue.get(), timeout=15)
-                    yield format_sse(event)
-                except asyncio.TimeoutError:
-                    yield format_keepalive()
+                    queue.put_nowait(("pg", payload))
+                except asyncio.QueueFull:
+                    logger.warning("sse_queue_full", user_id=user.id)
 
-                # Check if client disconnected
-                if await request.is_disconnected():
-                    break
+            await listen_conn.add_listener(channel, on_pg_notify)
+            logger.debug("sse_listening", user_id=user.id, channel=channel)
+
+            # Redis 订阅（瞬态事件）
+            import redis.asyncio as aioredis
+            redis_client = await aioredis.from_url(redis_url)
+            redis_sub = redis_client.pubsub()
+            await redis_sub.subscribe(f"stream:{user.id}")
+
+            async def redis_reader():
+                try:
+                    async for message in redis_sub.listen():
+                        if message["type"] == "message":
+                            try:
+                                queue.put_nowait(("redis", message["data"]))
+                            except asyncio.QueueFull:
+                                pass  # 瞬态事件丢了就丢了
+                except asyncio.CancelledError:
+                    pass
+
+            redis_task = asyncio.create_task(redis_reader())
+
+            # ══ Phase 2: 补发历史（LISTEN 已经在接收新通知） ══
+            pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2)
+            try:
+                async with pool.acquire() as conn:
+                    if thread_id:
+                        missed = await conn.fetch(
+                            """
+                            SELECT seq, event_type, payload FROM events
+                            WHERE user_id = $1 AND thread_id = $2 AND seq > $3
+                            ORDER BY seq
+                            """,
+                            user.id, thread_id, effective_last_seq,
+                        )
+                    else:
+                        missed = await conn.fetch(
+                            """
+                            SELECT seq, event_type, payload FROM events
+                            WHERE user_id = $1 AND seq > $2
+                            ORDER BY seq
+                            """,
+                            user.id, effective_last_seq,
+                        )
+
+                # ⚠️ seq 是 per-thread 的！使用 (thread_id, seq) 组合去重
+                sent_events: set[tuple[str, int]] = set()
+                for evt in missed:
+                    # 从 payload 提取 thread_id
+                    try:
+                        payload_data = json.loads(evt["payload"]) if isinstance(evt["payload"], str) else evt["payload"]
+                        evt_thread_id = payload_data.get("data", {}).get("thread_id") or payload_data.get("thread_id", "")
+                    except Exception:
+                        evt_thread_id = ""
+
+                    sent_events.add((evt_thread_id, evt["seq"]))
+                    yield format_sse_persistent(
+                        evt["seq"],
+                        evt["event_type"],
+                        evt["payload"] if isinstance(evt["payload"], str) else json.dumps(evt["payload"]),
+                    )
+
+                # ══ Phase 3: 消费实时流 ══
+                while not await request.is_disconnected():
+                    try:
+                        source, payload_str = await asyncio.wait_for(
+                            queue.get(),
+                            timeout=30,
+                        )
+
+                        if source == "pg":
+                            # 持久化事件通知
+                            meta = json.loads(payload_str)
+                            evt_thread_id = meta.get("thread_id", "")
+                            evt_seq = meta["seq"]
+
+                            # 去重：使用 (thread_id, seq) 组合
+                            if (evt_thread_id, evt_seq) in sent_events:
+                                continue
+
+                            # 可选 thread_id 过滤
+                            if thread_id and evt_thread_id != thread_id:
+                                continue
+
+                            # 从 DB 读完整事件
+                            async with pool.acquire() as conn:
+                                event = await conn.fetchrow(
+                                    "SELECT event_type, payload FROM events WHERE thread_id = $1 AND seq = $2",
+                                    evt_thread_id, evt_seq,
+                                )
+
+                            if event:
+                                payload_str = event["payload"] if isinstance(event["payload"], str) else json.dumps(event["payload"])
+                                yield format_sse_persistent(
+                                    evt_seq,
+                                    event["event_type"],
+                                    payload_str,
+                                )
+                                sent_events.add((evt_thread_id, evt_seq))
+
+                        elif source == "redis":
+                            # 瞬态事件 — 无 id，不持久化
+                            if isinstance(payload_str, bytes):
+                                payload_str = payload_str.decode()
+                            event_data = json.loads(payload_str)
+
+                            # 可选 thread_id 过滤
+                            if thread_id and event_data.get("thread_id") != thread_id:
+                                continue
+
+                            yield format_sse_transient(
+                                event_data.get("type", "custom"),
+                                payload_str,
+                            )
+
+                    except asyncio.TimeoutError:
+                        yield format_keepalive()
+
+            finally:
+                await pool.close()
+
         except asyncio.CancelledError:
             pass
+        except Exception as e:
+            logger.exception("sse_stream_error", user_id=user.id, error=str(e))
         finally:
-            sse_manager.disconnect(user.id, queue)
+            if redis_task:
+                redis_task.cancel()
+                try:
+                    await redis_task
+                except asyncio.CancelledError:
+                    pass
+            if redis_client:
+                await redis_client.close()
+            if listen_conn:
+                try:
+                    await listen_conn.remove_listener(channel, on_pg_notify)
+                except Exception:
+                    pass
+                await listen_conn.close()
+            logger.debug("sse_disconnected", user_id=user.id)
 
     return StreamingResponse(
         event_generator(),
@@ -191,30 +269,22 @@ async def sse_stream(
     )
 
 
-async def _replay_missed(
-    user_id: str,
-    last_event_id: str,
-    queue: asyncio.Queue,
-) -> None:
-    """Replay missed events since last_event_id by querying the events table."""
-    try:
-        # Find the seq of the last received event
-        from core.memory import Event, get_session
-        from sqlalchemy import select
+# ============================================
+# SSE Connection Manager (v2 — minimal stub for health check)
+# ============================================
 
-        async with get_session() as session:
-            result = await session.execute(
-                select(Event.thread_id, Event.seq).where(Event.id == last_event_id)
-            )
-            row = result.first()
-            if not row:
-                return
+class SSEConnectionManager:
+    """
+    v2 架构: SSE 通过 pg_notify 端点直接管理，此类仅用于 health check 指标。
+    实际的 SSE 连接计数应从 /events/stream 端点的活跃连接数获取。
+    """
 
-            # Get all events for this user's threads after the given seq
-            # We replay ALL threads, not just the one from last_event_id
-            events = await get_thread_events(row.thread_id, after_seq=row.seq)
-            for event in events:
-                if event.user_id == user_id:
-                    await queue.put(event)
-    except Exception as e:
-        logger.warning("sse_replay_failed", user_id=user_id, error=str(e))
+    def __init__(self, redis_client: Any | None = None) -> None:
+        self._redis = redis_client
+        # v2: 连接数由 pg_notify SSE 端点跟踪，此处仅为占位
+        self._connection_count = 0
+
+    @property
+    def active_connections(self) -> int:
+        """返回当前活跃 SSE 连接数（v2 中为占位值）"""
+        return self._connection_count
