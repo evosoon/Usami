@@ -31,7 +31,8 @@ export async function subscribeToPush(): Promise<boolean> {
     });
 
     return true;
-  } catch {
+  } catch (err) {
+    console.error("[push] Failed to subscribe to push notifications:", err);
     return false;
   }
 }
@@ -54,7 +55,8 @@ export async function isPushSubscribed(): Promise<boolean> {
     if (!registration) return false;
     const subscription = await registration.pushManager.getSubscription();
     return !!subscription;
-  } catch {
+  } catch (err) {
+    console.error("[push] Failed to check push subscription status:", err);
     return false;
   }
 }

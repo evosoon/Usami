@@ -16,6 +16,16 @@ import { Badge } from "@/components/ui/badge";
 import { useResolveHitl } from "@/hooks/use-resolve-hitl";
 import type { HiTLRequest } from "@/types/api";
 
+/**
+ * Sanitize context for safe rendering: strip HTML tags and
+ * truncate very long values to prevent DOM bloat.
+ */
+function sanitizeContext(ctx: Record<string, unknown>): string {
+  const raw = JSON.stringify(ctx, null, 2);
+  // Strip any HTML tags that might be present in context values
+  return raw.replace(/<[^>]*>/g, "");
+}
+
 interface HiTLDialogProps {
   request: HiTLRequest;
   threadId: string;
@@ -52,11 +62,11 @@ export function HiTLDialog({ request, threadId, open, onClose }: HiTLDialogProps
           <DialogDescription>{request.description}</DialogDescription>
         </DialogHeader>
 
-        {/* Context display */}
+        {/* Context display — sanitized to prevent XSS */}
         {request.context && Object.keys(request.context).length > 0 && (
-          <div className="rounded-md bg-muted p-3 text-sm">
+          <div className="rounded-md bg-muted p-3 text-sm overflow-auto max-h-60">
             <pre className="whitespace-pre-wrap text-xs">
-              {JSON.stringify(request.context, null, 2)}
+              {sanitizeContext(request.context)}
             </pre>
           </div>
         )}

@@ -84,8 +84,8 @@ export class UsamiSSE {
           } as SseEvent;
 
           this.handlers.forEach((h) => h(event));
-        } catch {
-          // Ignore malformed messages
+        } catch (err) {
+          console.error("[sse] Failed to parse SSE message:", eventType, err);
         }
       });
     }

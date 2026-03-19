@@ -84,6 +84,14 @@ dev-frontend:
 build-frontend:
     cd frontend && pnpm build
 
+# Run frontend unit tests (Vitest)
+test-frontend *args:
+    cd frontend && pnpm test {{ args }}
+
+# Run frontend E2E tests (Playwright, requires dev server)
+test-frontend-e2e:
+    cd frontend && pnpm test:e2e
+
 # Lint frontend
 lint-frontend:
     cd frontend && pnpm lint

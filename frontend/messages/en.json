@@ -153,7 +153,8 @@
     "taskFailed": "Task failed",
     "taskFailedBody": "Task execution failed",
     "hitlRequest": "Confirmation needed",
-    "hitlRequestBody": "A task needs your confirmation"
+    "hitlRequestBody": "A task needs your confirmation",
+    "unread": "unread"
   },
   "about": {
     "title": "About Usami",

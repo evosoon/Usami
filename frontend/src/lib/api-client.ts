@@ -30,11 +30,16 @@ async function refreshAuth(): Promise<{ id: string; email: string; display_name:
     if (!res.ok) return null;
     const data = await res.json();
     return data.user ?? null;
-  } catch {
+  } catch (err) {
+    console.error("[api-client] Auth refresh failed:", err);
     return null;
   }
 }
 
+/**
+ * Create an AbortController-aware request helper.
+ * Callers can pass `signal` in options for cancellation support.
+ */
 async function request<T>(path: string, options?: RequestInit, _retried = false): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     credentials: "include",
@@ -93,8 +98,8 @@ export const api = {
       body: JSON.stringify({ intent, config, thread_id: threadId }),
     }),
 
-  getTask: (threadId: string) =>
-    request<TaskResponse>(`/api/v1/tasks/${encodeURIComponent(threadId)}`),
+  getTask: (threadId: string, init?: RequestInit) =>
+    request<TaskResponse>(`/api/v1/tasks/${encodeURIComponent(threadId)}`, init),
 
   cancelTask: (threadId: string) =>
     request<{ status: string }>(`/api/v1/tasks/${encodeURIComponent(threadId)}/cancel`, {
@@ -111,8 +116,8 @@ export const api = {
     ),
 
   // Thread history
-  getThreads: () =>
-    request<ThreadSummary[]>("/api/v1/threads"),
+  getThreads: (init?: RequestInit) =>
+    request<ThreadSummary[]>("/api/v1/threads", init),
 
   getThreadEvents: (threadId: string, afterSeq = 0) =>
     request<PersistedEventDto[]>(
@@ -156,5 +161,13 @@ export const api = {
       body: JSON.stringify({ endpoint }),
     }),
 };
+
+/**
+ * Create a request with an AbortController for use with React Query.
+ * Example: `queryFn: ({ signal }) => api.getTask(id, { signal })`
+ */
+export function withSignal(signal?: AbortSignal): RequestInit | undefined {
+  return signal ? { signal } : undefined;
+}
 
 export { ApiError };

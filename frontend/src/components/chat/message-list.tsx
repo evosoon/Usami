@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useTranslations } from "next-intl";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Button } from "@/components/ui/button";
 import { MessageBubble } from "./message-bubble";
 import type { ChatMessage } from "@/hooks/use-derived-messages";
@@ -12,21 +12,28 @@ interface MessageListProps {
 }
 
 export function MessageList({ messages }: MessageListProps) {
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const parentRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const t = useTranslations("chat");
 
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 120,
+    overscan: 5,
+  });
+
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
-    if (autoScroll && bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: "smooth" });
+    if (autoScroll && messages.length > 0) {
+      virtualizer.scrollToIndex(messages.length - 1, { align: "end", behavior: "smooth" });
     }
-  }, [messages, autoScroll]);
+  }, [messages.length, autoScroll, virtualizer]);
 
   // Detect manual scroll to pause auto-scroll
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const el = e.currentTarget;
+  const handleScroll = useCallback(() => {
+    const el = parentRef.current;
+    if (!el) return;
     const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
     setAutoScroll(isAtBottom);
   }, []);
@@ -41,14 +48,27 @@ export function MessageList({ messages }: MessageListProps) {
 
   return (
     <div className="relative flex-1 overflow-hidden bg-white/85 dark:bg-zinc-900/85 backdrop-blur-xl">
-      <ScrollArea className="h-full" ref={scrollAreaRef} onScroll={handleScroll}>
-        <div className="space-y-4 p-4">
-          {messages.map((msg) => (
-            <MessageBubble key={msg.id} message={msg} />
-          ))}
-          <div ref={bottomRef} />
+      <div ref={parentRef} className="h-full overflow-auto" onScroll={handleScroll}>
+        <div
+          className="relative w-full p-4"
+          style={{ height: virtualizer.getTotalSize() }}
+        >
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const msg = messages[virtualRow.index];
+            return (
+              <div
+                key={msg.id}
+                data-index={virtualRow.index}
+                ref={virtualizer.measureElement}
+                className="absolute left-0 w-full px-4 pb-4"
+                style={{ transform: `translateY(${virtualRow.start}px)` }}
+              >
+                <MessageBubble message={msg} />
+              </div>
+            );
+          })}
         </div>
-      </ScrollArea>
+      </div>
 
       {!autoScroll && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
@@ -57,7 +77,7 @@ export function MessageList({ messages }: MessageListProps) {
             size="sm"
             onClick={() => {
               setAutoScroll(true);
-              bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+              virtualizer.scrollToIndex(messages.length - 1, { align: "end", behavior: "smooth" });
             }}
           >
             {t("scrollToBottom")}

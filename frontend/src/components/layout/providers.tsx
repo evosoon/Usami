@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { Component, useEffect, useRef, useState, useCallback } from "react";
+import type { ErrorInfo, ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "next-themes";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -12,6 +13,59 @@ import { useNotificationStore } from "@/stores/notification-store";
 import { HiTLDialog } from "@/components/hitl/hitl-dialog";
 import type { HiTLRequest } from "@/types/api";
 import type { SseEvent } from "@/types/sse";
+
+// ---------------------------------------------------------------------------
+// Error Boundary — prevents uncaught React errors from crashing the whole app
+// ---------------------------------------------------------------------------
+interface ErrorBoundaryProps {
+  children: ReactNode;
+  fallback?: ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    console.error("[ErrorBoundary] Uncaught error:", error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      if (this.props.fallback) return this.props.fallback;
+      return (
+        <div className="flex min-h-screen items-center justify-center p-8">
+          <div className="max-w-md space-y-4 text-center">
+            <h2 className="text-lg font-semibold">出现了意外错误</h2>
+            <p className="text-sm text-muted-foreground">
+              {this.state.error?.message ?? "未知错误"}
+            </p>
+            <button
+              className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground"
+              onClick={() => this.setState({ hasError: false, error: null })}
+            >
+              重试
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export { ErrorBoundary };
 
 function AuthHydrator() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -215,12 +269,14 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
         <TooltipProvider>
-          <AuthHydrator />
-          <SseConnector />
-          <HistoryLoader />
-          <HiTLWatcher />
-          <NotificationWatcher />
-          {children}
+          <ErrorBoundary>
+            <AuthHydrator />
+            <SseConnector />
+            <HistoryLoader />
+            <HiTLWatcher />
+            <NotificationWatcher />
+            {children}
+          </ErrorBoundary>
           <Toaster />
         </TooltipProvider>
       </ThemeProvider>

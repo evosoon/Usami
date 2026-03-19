@@ -90,8 +90,12 @@ Phase 1        Phase 2        Phase 3           Phase 4      Phase 5       Phase
 
 ### 3.2 即时验证
 
-- 运行相关测试
-- 类型检查 / lint
+- 运行相关测试:
+  - Backend: `cd backend && uv run python -m pytest tests/ -v --tb=short`
+  - Frontend: `cd frontend && pnpm test`
+- 类型检查 / lint:
+  - Backend: `cd backend && uv run ruff check .`
+  - Frontend: `cd frontend && pnpm lint`
 - 修复发现的问题
 
 ### 3.3 标记完成
@@ -114,9 +118,13 @@ Phase 1        Phase 2        Phase 3           Phase 4      Phase 5       Phase
 
 ### 4.2 全量测试
 
-- 运行完整测试套件
+- 运行完整测试套件:
+  - Backend: `just test` (pytest)
+  - Frontend: `just test-frontend` (Vitest unit tests)
+  - Frontend lint: `just lint-frontend`
 - 确保无回归
 - 修复发现的问题
+- E2E tests (`just test-frontend-e2e`) 在有 dev server 时按需运行
 
 **检查点**: 所有测试通过后继续
 
