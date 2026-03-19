@@ -6,7 +6,7 @@ import { useTranslations } from "next-intl";
 import { Bell, Check, Trash2, CheckCircle, AlertCircle, HelpCircle, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
+
 import { useNotificationStore } from "@/stores/notification-store";
 import type { Notification } from "@/stores/notification-store";
 
@@ -88,7 +88,7 @@ export function NotificationCenter() {
               </div>
             </div>
 
-            <ScrollArea className="max-h-80">
+            <div className="max-h-80 overflow-y-auto">
               {notifications.length === 0 ? (
                 <div className="p-6 text-center text-sm text-muted-foreground">
                   {t("empty")}
@@ -125,7 +125,7 @@ export function NotificationCenter() {
                   })}
                 </div>
               )}
-            </ScrollArea>
+            </div>
           </div>
         </>
       )}
