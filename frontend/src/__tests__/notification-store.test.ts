@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { useNotificationStore } from "@/stores/notification-store";
 
 function resetStore() {
-  useNotificationStore.setState({ notifications: [], unreadCount: 0 });
+  useNotificationStore.setState({
+    notifications: [],
+    unreadCount: 0,
+    seenEventKeys: [],
+  });
 }
 
 describe("useNotificationStore", () => {
@@ -19,6 +23,19 @@ describe("useNotificationStore", () => {
     expect(notifications).toHaveLength(1);
     expect(notifications[0].read).toBe(false);
     expect(unreadCount).toBe(1);
+  });
+
+  it("deduplicates by eventKey", () => {
+    const payload = {
+      type: "task_completed" as const,
+      title: "taskCompleted",
+      body: "done",
+      threadId: "t1",
+    };
+    useNotificationStore.getState().addNotification(payload, "t1:42");
+    useNotificationStore.getState().addNotification(payload, "t1:42");
+    expect(useNotificationStore.getState().notifications).toHaveLength(1);
+    expect(useNotificationStore.getState().seenEventKeys).toContain("t1:42");
   });
 
   it("limits to 100 notifications", () => {

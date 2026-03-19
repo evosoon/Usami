@@ -15,16 +15,18 @@ interface PlanCardProps {
 export function PlanCard({ plan, threadId }: PlanCardProps) {
   const t = useTranslations("task");
 
+  const tasks = plan.tasks ?? [];
+
   return (
     <Card className="w-full max-w-2xl">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm">
-          {t("planTitle", { count: plan.tasks.length })}
+          {t("planTitle", { count: tasks.length })}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <ul className="space-y-1.5">
-          {plan.tasks.slice(0, 5).map((task) => (
+          {tasks.slice(0, 5).map((task) => (
             <li key={task.task_id} className="flex items-center gap-2 text-sm">
               <Badge variant="secondary" className="shrink-0 text-xs">
                 {task.assigned_persona}
@@ -32,9 +34,9 @@ export function PlanCard({ plan, threadId }: PlanCardProps) {
               <span className="truncate">{task.title}</span>
             </li>
           ))}
-          {plan.tasks.length > 5 && (
+          {tasks.length > 5 && (
             <li className="text-xs text-muted-foreground">
-              {t("moreTasks", { count: plan.tasks.length - 5 })}
+              {t("moreTasks", { count: tasks.length - 5 })}
             </li>
           )}
         </ul>

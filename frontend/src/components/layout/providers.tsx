@@ -216,31 +216,43 @@ function NotificationWatcher() {
 
     const unsubscribe = sse.onEvent((event: SseEvent) => {
       const addNotification = useNotificationStore.getState().addNotification;
+      // Build a stable key from thread_id + seq (or type) to deduplicate on replay
+      const eventKey = (suffix: string) =>
+        `${event.thread_id}:${"seq" in event && event.seq != null ? event.seq : suffix}`;
 
       switch (event.type) {
         case "task.completed":
-          addNotification({
-            type: "task_completed",
-            title: "taskCompleted",
-            body: event.result?.slice(0, 100) ?? "",
-            threadId: event.thread_id,
-          });
+          addNotification(
+            {
+              type: "task_completed",
+              title: "taskCompleted",
+              body: event.result?.slice(0, 100) ?? "",
+              threadId: event.thread_id,
+            },
+            eventKey("completed"),
+          );
           break;
         case "task.failed":
-          addNotification({
-            type: "task_failed",
-            title: "taskFailed",
-            body: event.error ?? "",
-            threadId: event.thread_id,
-          });
+          addNotification(
+            {
+              type: "task_failed",
+              title: "taskFailed",
+              body: event.error ?? "",
+              threadId: event.thread_id,
+            },
+            eventKey("failed"),
+          );
           break;
         case "hitl.request":
-          addNotification({
-            type: "hitl_request",
-            title: "hitlRequest",
-            body: event.request.title ?? "",
-            threadId: event.thread_id,
-          });
+          addNotification(
+            {
+              type: "hitl_request",
+              title: "hitlRequest",
+              body: event.request.title ?? "",
+              threadId: event.thread_id,
+            },
+            eventKey("hitl"),
+          );
           break;
       }
     });
