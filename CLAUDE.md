@@ -2,11 +2,64 @@
 
 Personal AI Operating System — multi-agent orchestration for technical research and knowledge synthesis.
 
+## v2 Architecture Overview
+
+v2 introduces a **Worker-driven model** where task execution is decoupled from the API process:
+
+```
+┌─────────────────┐         ┌─────────────────┐
+│   API Process   │         │  Worker Process │
+│  (FastAPI)      │         │  (LangGraph)    │
+│                 │         │                 │
+│  POST /tasks ───┼──pg_notify──►  LISTEN     │
+│                 │         │       │         │
+│  GET /events ◄──┼─────────┼── astream()     │
+│   (SSE)         │         │                 │
+└────────┬────────┘         └────────┬────────┘
+         │                           │
+         │      PostgreSQL           │
+         └──────────┬────────────────┘
+                    │
+            ┌───────┴───────┐
+            │  events table │  ← Single source of truth
+            │  tasks table  │
+            │  checkpoints  │
+            └───────────────┘
+```
+
+### Key Invariants
+
+| # | Invariant | Verification |
+|---|-----------|--------------|
+| I-1 | PostgreSQL is single source of truth | `kill -9` Worker → restart recovers |
+| I-2 | Reliable event delivery | Disconnect → reconnect → replay from `last_seq` |
+| I-3 | All mutations are idempotent | Same request twice = same result |
+
+### Framework Primitives (v1 → v2)
+
+| Capability | v1 (Manual) | v2 (Framework) |
+|-----------|-------------|----------------|
+| State machine | `current_phase` string | Graph topology IS the phase |
+| HiTL | `hitl_pending` list + polling | `interrupt()` + `Command(resume=)` |
+| Streaming | `emit()` closure passthrough | `get_stream_writer()` |
+| Persistence | In-memory `active_tasks` | PostgreSQL + Checkpoint |
+
 ## Architecture (3 patterns to internalize)
 
-1. **Boss-Worker State Machine**: LangGraph StateGraph(dict) drives `init -> planning -> validating -> executing -> aggregating -> done`. Boss decomposes intent, specialist Personas execute, Boss aggregates. All state is plain dict, not Pydantic.
+1. **Boss-Worker State Machine**: LangGraph StateGraph with 5-node topology: `plan → validate → execute → review → aggregate`. Boss decomposes intent, specialist Personas execute in parallel, Boss aggregates. State uses `TypedDict` with `Annotated` reducers.
 2. **Config-Driven Personas**: Adding a persona = editing `config/personas.yaml`. No Python file per agent. `PersonaFactory` reads YAML, creates LangGraph ReAct agents at startup.
 3. **Envelope Pattern (F3)**: Agents pass `TaskOutput.summary` (<=500 tokens) downstream. `full_result` is only read by Boss during aggregation. Never pass full_result between Personas.
+
+## Collaboration Workflow
+
+See `docs/collaboration-workflow.md` for the standard human-AI collaboration workflow.
+
+Key phases: **Analyze → Align → Plan → Implement → Clean → Reflect → Document → Commit → Next**
+
+Artifacts per phase:
+- **Plan**: `~/.claude/plans/*.md` (ephemeral) + TodoWrite
+- **Reflect**: Patterns/anti-patterns learned
+- **Document**: Update CLAUDE.md + docs/ (persistent)
 
 ## Code style
 
@@ -64,15 +117,16 @@ just env-check                  # audit .env vs .env.example
 
 ```
 config/          YAML configs (personas, tools, routing, litellm). See config/CLAUDE.md
+frontend/        Next.js 16 frontend (React 19 + Zustand + TanStack Query). See frontend/CLAUDE.md
 backend/         Python backend (FastAPI + LangGraph). See backend/CLAUDE.md
-  core/          Core business logic (11 modules)
-  agents/        Agent graphs (boss.py)
-  api/           REST + WebSocket
+  core/          Core business logic (13 modules)
+  agents/        Agent graphs (boss.py, nodes.py, prompts.py)
+  api/           REST + SSE (Server-Sent Events)
   scheduler/     Cron + event bus
   alembic/       DB migrations
-  tests/         pytest suite
+  tests/         pytest suite (10 modules, 129 cases)
 docs/            Human documentation (architecture, design decisions)
-docker-compose.yml           6 services: backend, frontend, postgres, redis, litellm, searxng
+docker-compose.yml           7 services: backend, worker, frontend, postgres, redis, litellm, searxng
 docker-compose.override.yml  Dev overrides: frontend hot-reload (auto-merged by docker compose)
 ```
 

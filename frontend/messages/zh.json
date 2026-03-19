@@ -27,19 +27,26 @@
     "analyzing": "正在分析意图，规划任务...",
     "planReady": "计划就绪：{count} 个子任务",
     "executing": "[{persona}] 正在执行...",
+    "executingTasks": "正在执行 {count} 个子任务...",
+    "taskDone": "[{task}] {persona} 完成",
+    "taskFailed": "[{task}] 执行失败: {error}",
     "progress": "[{persona}] {status}",
     "aggregating": "正在汇总分析...",
     "completed": "任务完成",
     "failed": "任务失败: {error}",
     "hitlWaiting": "等待您的确认...",
     "thinkingSteps": "思考过程（{count} 步）",
+    "createFailed": "任务创建失败",
     "noThreads": "暂无对话",
     "timeJustNow": "刚刚",
     "timeMinutesAgo": "{count}分钟前",
     "timeHoursAgo": "{count}小时前",
     "timeDaysAgo": "{count}天前",
     "deleteThread": "删除对话",
-    "deleteConfirm": "确认删除此对话？此操作不可恢复。"
+    "deleteConfirm": "确认删除此对话？此操作不可恢复。",
+    "deleteFailed": "删除失败",
+    "historyTitle": "历史对话",
+    "newChat": "新对话"
   },
   "phase": {
     "created": "已创建",
@@ -117,6 +124,10 @@
     "connecting": "正在重连...",
     "disconnected": "连接已断开"
   },
+  "userCard": {
+    "guest": "访客",
+    "connectionStatus": "连接状态"
+  },
   "settings": {
     "title": "设置",
     "theme": "主题",
@@ -129,6 +140,7 @@
     "pushEnabled": "已开启",
     "pushDisabled": "未开启",
     "enablePush": "开启推送",
+    "disablePush": "关闭推送",
     "themeCurrent": "当前: {theme}"
   },
   "notifications": {

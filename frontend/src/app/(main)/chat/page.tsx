@@ -1,6 +1,5 @@
 "use client";
 
-import { ThreadList } from "@/components/chat/thread-list";
 import { MessageList } from "@/components/chat/message-list";
 import { ChatInput } from "@/components/chat/chat-input";
 import { ConnectionStatusBar } from "@/components/chat/connection-status-bar";
@@ -21,9 +20,8 @@ export default function ChatPage() {
   const messages = useDerivedMessages(activeThread);
 
   return (
-    <div className="flex h-full">
-      <ThreadList />
-      <div className="flex flex-1 flex-col">
+    <div className="flex h-full items-center justify-center p-6">
+      <div className="flex h-full w-full max-w-4xl flex-col rounded-2xl border border-border/50 shadow-xl overflow-hidden">
         <ConnectionStatusBar />
         <MessageList messages={messages} />
         <ChatInput />

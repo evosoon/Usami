@@ -1,9 +1,9 @@
 """
-Usami — Cron Scheduler
-定时任务调度 + 事件驱动触发
+Usami — Cron Scheduler (v2)
+定时任务调度 — 通过 pg_notify 触发 Worker 执行
 
-MVP: APScheduler Cron 调度
-未来: + Redis Pub/Sub 事件驱动
+v2 架构: Scheduler 只负责写入 tasks 表 + 发送 pg_notify，
+        Worker 进程监听并执行实际的图调用。
 """
 
 from __future__ import annotations
@@ -17,18 +17,14 @@ from apscheduler.triggers.cron import CronTrigger
 
 logger = structlog.get_logger()
 
-# 模块级引用: Boss Graph + active tasks (通过 init_scheduler 注入)
-_boss_graph = None
-_active_tasks: dict[str, Any] | None = None
 SYSTEM_USER_ID = "system"
 
 
-def init_scheduler(config: dict[str, Any], boss_graph=None, active_tasks: dict | None = None) -> AsyncIOScheduler:
-    """初始化定时调度器"""
-    global _boss_graph, _active_tasks
-    _boss_graph = boss_graph
-    _active_tasks = active_tasks
+def init_scheduler(config: dict[str, Any], boss_graph=None) -> AsyncIOScheduler:
+    """初始化定时调度器
 
+    Note: boss_graph 参数保留用于健康检查，但不用于任务执行。
+    """
     scheduler = AsyncIOScheduler()
 
     # 从配置加载预定义的定时任务
@@ -62,28 +58,29 @@ def _register_task(scheduler: AsyncIOScheduler, task_cfg: dict) -> None:
 
 
 async def _execute_scheduled_task(intent: str, task_id: str) -> None:
-    """执行定时触发的任务"""
+    """执行定时触发的任务 — v2: 写入 DB + pg_notify"""
     logger.info("scheduled_task_triggered", task_id=task_id, intent=intent)
 
-    if _boss_graph is None:
-        logger.error("scheduled_task_no_graph", task_id=task_id)
-        return
-
     thread_id = f"scheduled_{task_id}_{uuid.uuid4().hex[:8]}"
-    config = {"configurable": {"thread_id": thread_id}}
-
-    # Register in active_tasks so SSE event callback can find user_id
-    if _active_tasks is not None:
-        _active_tasks[thread_id] = {"task": None, "user_id": SYSTEM_USER_ID}
 
     try:
-        await _boss_graph.ainvoke(
-            {"user_intent": intent, "current_phase": "init", "thread_id": thread_id},
-            config=config,
-        )
-        logger.info("scheduled_task_completed", task_id=task_id, thread_id=thread_id)
+        from core.memory import get_session, Task
+        from core.task_queue import notify_new_task
+
+        # 写入 tasks 表
+        async with get_session() as session:
+            task = Task(
+                thread_id=thread_id,
+                user_id=SYSTEM_USER_ID,
+                intent=intent,
+                status="pending",
+            )
+            session.add(task)
+            await session.commit()
+
+        # 发送 pg_notify 通知 Worker
+        await notify_new_task(thread_id)
+
+        logger.info("scheduled_task_queued", task_id=task_id, thread_id=thread_id)
     except Exception as e:
-        logger.error("scheduled_task_execution_failed", task_id=task_id, error=str(e))
-    finally:
-        if _active_tasks is not None:
-            _active_tasks.pop(thread_id, None)
+        logger.error("scheduled_task_queue_failed", task_id=task_id, error=str(e))

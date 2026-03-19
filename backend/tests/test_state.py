@@ -5,7 +5,7 @@ Usami — State Schema 单元测试
 
 from __future__ import annotations
 
-from core.state import AgentState, Task, TaskOutput, TaskPlan, TaskStatus
+from core.state import Task, TaskOutput, TaskPlan, TaskStatus
 
 # ============================================
 # get_ready_tasks()
@@ -78,18 +78,27 @@ class TestGetReadyTasks:
         ready = plan.get_ready_tasks(completed_ids={"t1"})
         assert ready == []
 
-    def test_running_task_not_returned(self):
-        """RUNNING 状态的任务不返回 (只返回 PENDING)"""
+    def test_running_task_tracked_by_completed_ids(self):
+        """v2: get_ready_tasks uses completed_ids, not task.status
+
+        Tasks are tracked by completed_ids (append-only reducer),
+        not by task.status field. Running tasks should be in completed_ids.
+        """
         plan = TaskPlan(
             plan_id="p5",
             user_intent="test",
             tasks=[
                 Task(task_id="t1", title="A", description="a",
                      assigned_persona="researcher", task_type="research",
-                     status=TaskStatus.RUNNING),
+                     status=TaskStatus.RUNNING),  # status field is informational
             ],
         )
+        # With empty completed_ids, task is returned (even if status=RUNNING)
         ready = plan.get_ready_tasks(completed_ids=set())
+        assert len(ready) == 1
+
+        # When task_id is in completed_ids, task is filtered out
+        ready = plan.get_ready_tasks(completed_ids={"t1"})
         assert ready == []
 
     def test_all_completed_returns_empty(self):
@@ -160,13 +169,3 @@ class TestStateModels:
         assert o.confidence == 1.0
         assert o.artifacts == []
         assert o.metadata == {}
-
-    def test_agent_state_defaults(self):
-        s = AgentState()
-        assert s.user_intent == ""
-        assert s.current_phase == "init"
-        assert s.task_outputs == {}
-        assert s.completed_task_ids == set()
-        assert s.hitl_pending == []
-        assert s.total_tokens == 0
-        assert s.total_cost_usd == 0.0

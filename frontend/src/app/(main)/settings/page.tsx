@@ -13,17 +13,16 @@ export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const t = useTranslations("settings");
   const [mounted, setMounted] = useState(false);
+  const [currentLocale, setCurrentLocale] = useState("zh");
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushLoading, setPushLoading] = useState(false);
 
   useEffect(() => {
     setMounted(true);
+    const locale = document.cookie.match(/NEXT_LOCALE=(\w+)/)?.[1] ?? "zh";
+    setCurrentLocale(locale);
     isPushSubscribed().then(setPushEnabled);
   }, []);
-
-  const currentLocale = typeof document !== "undefined"
-    ? (document.cookie.match(/NEXT_LOCALE=(\w+)/)?.[1] ?? "zh")
-    : "zh";
 
   const setLocale = (locale: string) => {
     document.cookie = `NEXT_LOCALE=${locale};path=/;max-age=${60 * 60 * 24 * 365}`;
@@ -97,7 +96,7 @@ export default function SettingsPage() {
               <button
                 key={lang.key}
                 className={`rounded-lg border px-4 py-2 text-sm transition-colors ${
-                  currentLocale === lang.key ? "border-primary bg-muted" : "hover:bg-muted/50"
+                  mounted && currentLocale === lang.key ? "border-primary bg-muted" : "hover:bg-muted/50"
                 }`}
                 onClick={() => setLocale(lang.key)}
               >

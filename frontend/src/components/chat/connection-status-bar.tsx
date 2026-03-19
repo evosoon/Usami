@@ -1,30 +1,67 @@
 "use client";
 
+import { useEffect, useRef, useCallback } from "react";
 import { useTranslations } from "next-intl";
 import { useSseStore } from "@/stores/sse-store";
+import { useThreadStore } from "@/stores/thread-store";
+import { cn } from "@/lib/utils";
 
 export function ConnectionStatusBar() {
   const status = useSseStore((s) => s.status);
+  const activeThread = useThreadStore((s) => s.getActiveThread());
   const t = useTranslations("connection");
+  const textRef = useRef<HTMLSpanElement>(null);
+  const prevStatusRef = useRef(status);
+  const isInitialMount = useRef(true);
 
-  if (status === "connected") return null;
+  const showTextBriefly = useCallback(() => {
+    if (textRef.current) {
+      textRef.current.style.opacity = "1";
+      setTimeout(() => {
+        if (textRef.current) {
+          textRef.current.style.opacity = "0";
+        }
+      }, 3000);
+    }
+  }, []);
 
-  const isConnecting = status === "connecting";
+  // Show text briefly when status changes (skip initial mount)
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      prevStatusRef.current = status;
+      return;
+    }
+
+    if (prevStatusRef.current !== status) {
+      prevStatusRef.current = status;
+      showTextBriefly();
+    }
+  }, [status, showTextBriefly]);
 
   return (
-    <div
-      className={`flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-medium ${
-        isConnecting
-          ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-200"
-          : "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-200"
-      }`}
-    >
+    <div className="relative flex items-center gap-1.5 px-4 py-2 bg-white/85 dark:bg-zinc-900/85 backdrop-blur-xl rounded-t-2xl">
       <span
-        className={`size-2 rounded-full ${
-          isConnecting ? "animate-pulse bg-yellow-500" : "bg-red-500"
-        }`}
+        className={cn(
+          "size-2 shrink-0 rounded-full transition-colors",
+          status === "connected" && "bg-green-500",
+          status === "connecting" && "bg-yellow-500 animate-pulse",
+          status === "disconnected" && "bg-red-500"
+        )}
       />
-      {isConnecting ? t("connecting") : t("disconnected")}
+      <span
+        ref={textRef}
+        className="absolute left-8 text-xs text-muted-foreground transition-opacity duration-300 opacity-0"
+      >
+        {status === "connected" && t("connected")}
+        {status === "connecting" && t("connecting")}
+        {status === "disconnected" && t("disconnected")}
+      </span>
+      {activeThread && (
+        <span className="text-sm font-medium truncate">
+          {activeThread.intent}
+        </span>
+      )}
     </div>
   );
 }

@@ -5,7 +5,6 @@ import { useTranslations } from "next-intl";
 import { Streamdown } from "streamdown";
 import { code } from "@streamdown/code";
 import { cjk } from "@streamdown/cjk";
-import "streamdown/styles.css";
 import { Check, ChevronDown, ChevronRight, Loader2, X } from "lucide-react";
 import type { ChatMessage } from "@/hooks/use-derived-messages";
 
@@ -88,7 +87,7 @@ function ThinkingBubble({ message }: { message: ChatMessage }) {
 function ResultBubble({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
   return (
     <div className="flex justify-start">
-      <div className="max-w-[90%] rounded-2xl bg-background border px-4 py-3">
+      <div className="max-w-[90%] rounded-2xl bg-background border px-4 py-3 prose prose-sm dark:prose-invert prose-headings:font-semibold prose-headings:mb-2 prose-headings:mt-4 first:prose-headings:mt-0 prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 max-w-none">
         <Streamdown
           animated
           plugins={{ code, cjk }}

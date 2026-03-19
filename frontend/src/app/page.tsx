@@ -16,14 +16,22 @@ export default async function HomePage() {
     <div className="flex min-h-screen flex-col">
       {/* Hero */}
       <section className="flex flex-1 flex-col items-center justify-center gap-6 px-6 py-24 text-center">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo.svg" alt="Usami" className="h-24 w-auto" />
-        <h1 className="text-5xl font-bold tracking-tight sm:text-6xl">
-          Usami
-        </h1>
-        <p className="max-w-2xl text-xl text-muted-foreground">
-          {t("subtitle")}
-        </p>
+        <div className="relative flex flex-col items-center gap-4">
+          {/* Background logo */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/logo.svg"
+            alt=""
+            aria-hidden="true"
+            className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-40 w-auto opacity-10 sm:h-48"
+          />
+          <h1 className="relative text-5xl font-bold tracking-tight sm:text-6xl">
+            Usami
+          </h1>
+          <p className="relative max-w-2xl text-xl text-muted-foreground">
+            {t("subtitle")}
+          </p>
+        </div>
         <div className="flex gap-4 mt-4">
           <Button size="lg" render={<Link href="/chat" />}>
             {t("getStarted")}

@@ -1,19 +1,28 @@
 """
-Usami — REST API Routes
+Usami — REST API Routes (v2 Refactor)
+
+v2 设计原则:
+- POST /tasks: 只写 DB + pg_notify，不在进程内存执行
+- POST /tasks/{id}/resume: CAS interrupted→resuming + INSERT resume_requests
+- 并发检查基于数据库，不是内存
+- 删除 asyncio.create_task, aupdate_state, active_tasks
 """
 
 from __future__ import annotations
 
-import asyncio
+import json
 import uuid
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 
 from core.auth import get_current_user
-from core.event_store import delete_thread, get_thread_events, list_user_threads, persist_event, verify_thread_ownership
+from core.event_store import delete_thread, get_thread_events, list_user_threads, verify_thread_ownership
+from core.memory import get_session
 from core.state import EVENT_PHASE_MAP, UserProfile
+from core.task_queue import notify_new_task, notify_resume_task, persist_and_notify
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -38,8 +47,14 @@ class TaskResponse(BaseModel):
     task_plan: dict | None = None
 
 
+class ResumeRequest(BaseModel):
+    """HiTL 恢复请求"""
+    action: str
+    data: dict = {}
+
+
 class HiTLResolveRequest(BaseModel):
-    """HiTL 用户决定"""
+    """HiTL 用户决定 (legacy, for backward compat)"""
     request_id: str
     decision: str
     feedback: str = ""
@@ -59,111 +74,215 @@ async def _get_thread_last_result(thread_id: str) -> str | None:
 
 
 # ============================================
-# Routes
+# Routes (v2 — Database-driven)
 # ============================================
 
 @router.post("/tasks", response_model=TaskResponse)
-async def create_task(request: Request, req: TaskRequest, _user: UserProfile = Depends(get_current_user)):
+async def create_task(request: Request, req: TaskRequest, user: UserProfile = Depends(get_current_user)):
     """
-    创建新任务
-    用户意图 → Boss 分解 → Persona 执行 → 交付结果
+    创建新任务 (v2)
+
+    1. 并发检查 (数据库，不是内存)
+    2. INSERT INTO tasks
+    3. pg_notify('new_task', ...) — 只传 ID
+    4. 返回 {thread_id, status: "pending"}
+
+    Worker 进程收到通知后执行图
     """
-    # Per-user concurrent task limit
-    active_tasks = request.app.state.active_tasks
+    logger.info("create_task_called", intent=req.intent, user_id=user.id)
     MAX_CONCURRENT_TASKS_PER_USER = 3
-    user_active = sum(
-        1 for r in active_tasks.values()
-        if isinstance(r, dict) and r.get("user_id") == _user.id
-    )
-    if user_active >= MAX_CONCURRENT_TASKS_PER_USER:
-        raise HTTPException(status_code=429, detail="并发任务数已达上限")
 
-    # Follow-up: reuse thread_id, load previous result for context
-    if req.thread_id:
-        thread_id = req.thread_id
-        if not await verify_thread_ownership(thread_id, _user.id):
-            raise HTTPException(status_code=404, detail="任务不存在")
-        previous_result = await _get_thread_last_result(thread_id)
-    else:
-        thread_id = f"thread_{uuid.uuid4().hex[:12]}"
-        previous_result = None
-
-    boss_graph = request.app.state.boss_graph
-
-    # 内存级任务追踪: 存储 asyncio.Task + user_id (用于 SSE 路由)
-    task_record = {"task": None, "user_id": _user.id}
-    request.app.state.active_tasks[thread_id] = task_record
-
-    async def _run():
-        try:
-            config = {"configurable": {"thread_id": thread_id}}
-            initial_state = {
-                "user_intent": req.intent,
-                "current_phase": "init",
-                "thread_id": thread_id,
-            }
-            if previous_result:
-                initial_state["previous_result"] = previous_result
-            await asyncio.wait_for(
-                boss_graph.ainvoke(initial_state, config=config),
-                timeout=600,  # 10 minutes
+    try:
+        async with get_session() as session:
+            # 1. 并发检查（数据库）
+            result = await session.execute(
+                text("""
+                    SELECT COUNT(*) FROM tasks
+                    WHERE user_id = :user_id
+                    AND status IN ('pending', 'running', 'interrupted', 'resuming')
+                """),
+                {"user_id": user.id},
             )
-            logger.info("task_completed", thread_id=thread_id)
-        except asyncio.TimeoutError:
-            logger.error("task_timeout", thread_id=thread_id)
-            sse_manager = getattr(request.app.state, "sse_manager", None)
-            if sse_manager:
-                persisted = await persist_event(
-                    thread_id, _user.id, "task.failed",
-                    {"thread_id": thread_id, "task_id": "timeout", "error": "任务执行超时（10分钟）"},
-                )
-                await sse_manager.send_to_user(_user.id, persisted)
-        except Exception as e:
-            logger.error("task_execution_failed", thread_id=thread_id, error=str(e))
-        finally:
-            request.app.state.active_tasks.pop(thread_id, None)
+            active_count = result.scalar() or 0
 
-    # 异步执行: 不阻塞 HTTP 响应
-    task = asyncio.create_task(_run())
-    task_record["task"] = task
+            if active_count >= MAX_CONCURRENT_TASKS_PER_USER:
+                raise HTTPException(status_code=429, detail="并发任务数已达上限")
 
-    # Persist + broadcast task.created event
-    sse_manager = getattr(request.app.state, "sse_manager", None)
-    if sse_manager:
-        persisted = await persist_event(
-            thread_id, _user.id, "task.created",
-            {"thread_id": thread_id, "intent": req.intent},
+            # Follow-up: reuse thread_id, load previous result for context
+            if req.thread_id:
+                thread_id = req.thread_id
+                if not await verify_thread_ownership(thread_id, user.id):
+                    raise HTTPException(status_code=404, detail="任务不存在")
+                # Note: previous_result is loaded by Worker when executing
+            else:
+                thread_id = f"thread_{uuid.uuid4().hex[:12]}"
+
+            # 2. 创建任务记录
+            await session.execute(
+                text("""
+                    INSERT INTO tasks (thread_id, user_id, intent, status)
+                    VALUES (:thread_id, :user_id, :intent, 'pending')
+                    ON CONFLICT (thread_id) DO UPDATE SET
+                        intent = :intent,
+                        status = 'pending',
+                        updated_at = NOW()
+                """),
+                {
+                    "thread_id": thread_id,
+                    "user_id": user.id,
+                    "intent": req.intent,
+                },
+            )
+
+            # 3. 持久化创建事件
+            await persist_and_notify(
+                session,
+                thread_id,
+                user.id,
+                {
+                    "type": "task.created",
+                    "data": {"thread_id": thread_id, "intent": req.intent},
+                },
+            )
+
+            # 4. pg_notify Worker（只传 ID）
+            await notify_new_task(session, thread_id)
+
+            await session.commit()
+
+        logger.info("task_created", thread_id=thread_id, user_id=user.id)
+
+        return TaskResponse(
+            thread_id=thread_id,
+            status="pending",
         )
-        await sse_manager.send_to_user(_user.id, persisted)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("create_task_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=f"创建任务失败: {e}")
 
-    return TaskResponse(
-        thread_id=thread_id,
-        status="running",
-    )
+
+@router.post("/tasks/{thread_id}/resume")
+async def resume_task(
+    thread_id: str,
+    req: ResumeRequest,
+    request: Request,
+    user: UserProfile = Depends(get_current_user),
+):
+    """
+    HiTL 恢复 (v2)
+
+    1. 权限检查
+    2. CAS: interrupted → resuming
+    3. INSERT INTO resume_requests
+    4. pg_notify('resume_task', ...) — 只传 ID
+    """
+    async with get_session() as session:
+        # 1. 权限检查
+        result = await session.execute(
+            text("SELECT user_id, status FROM tasks WHERE thread_id = :thread_id"),
+            {"thread_id": thread_id},
+        )
+        task = result.fetchone()
+
+        if not task:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        if task.user_id != user.id:
+            raise HTTPException(status_code=403, detail="无权操作此任务")
+
+        # 2. CAS: interrupted → resuming
+        result = await session.execute(
+            text("""
+                UPDATE tasks SET status = 'resuming', updated_at = NOW()
+                WHERE thread_id = :thread_id AND status = 'interrupted'
+            """),
+            {"thread_id": thread_id},
+        )
+
+        if result.rowcount == 0:
+            raise HTTPException(
+                status_code=409,
+                detail=f"任务状态为 '{task.status}'，无法恢复（需要 'interrupted'）",
+            )
+
+        # 3. 持久化 resume 请求（Worker 崩溃后可恢复）
+        await session.execute(
+            text("""
+                INSERT INTO resume_requests (thread_id, resume_value)
+                VALUES (:thread_id, :resume_value)
+            """),
+            {
+                "thread_id": thread_id,
+                "resume_value": json.dumps({"action": req.action, "data": req.data}),
+            },
+        )
+
+        # 4. pg_notify Worker（加速器，非可靠性保证）
+        await notify_resume_task(session, thread_id)
+
+        await session.commit()
+
+    logger.info("task_resuming", thread_id=thread_id, user_id=user.id)
+
+    return {"status": "resuming"}
 
 
 @router.get("/tasks/{thread_id}")
-async def get_task_status(thread_id: str, request: Request, _user: UserProfile = Depends(get_current_user)):
-    """获取任务执行状态 — 从事件表派生"""
-    if not await verify_thread_ownership(thread_id, _user.id):
+async def get_task_status(thread_id: str, request: Request, user: UserProfile = Depends(get_current_user)):
+    """获取任务执行状态 — 从 tasks 表 + events 表派生"""
+    async with get_session() as session:
+        # 先从 tasks 表获取状态
+        result = await session.execute(
+            text("SELECT user_id, status, intent FROM tasks WHERE thread_id = :thread_id"),
+            {"thread_id": thread_id},
+        )
+        task = result.fetchone()
+
+        if task:
+            if task.user_id != user.id:
+                raise HTTPException(status_code=403, detail="无权访问此任务")
+
+            # 从 events 表获取详细信息
+            events = await get_thread_events(thread_id)
+
+            result_text = None
+            task_plan = None
+            error = None
+            hitl_pending = []
+
+            for evt in events:
+                if evt.event_type == "task.completed":
+                    result_text = evt.payload.get("result") or evt.payload.get("data", {}).get("result")
+                elif evt.event_type == "task.failed":
+                    error = evt.payload.get("error") or evt.payload.get("data", {}).get("error")
+                elif evt.event_type in ("task.plan_ready", "phase.change"):
+                    if "tasks" in evt.payload.get("data", {}):
+                        task_plan = evt.payload["data"]
+                elif evt.event_type == "interrupt":
+                    hitl_pending.append(evt.payload.get("data", {}).get("value", {}))
+
+            return {
+                "thread_id": thread_id,
+                "status": task.status,
+                "intent": task.intent,
+                "task_plan": task_plan,
+                "result": result_text,
+                "error": error,
+                "hitl_pending": hitl_pending,
+            }
+
+    # Fallback: 检查 events 表（旧数据兼容）
+    if not await verify_thread_ownership(thread_id, user.id):
         raise HTTPException(status_code=404, detail="任务不存在")
+
     events = await get_thread_events(thread_id)
     if not events:
-        # Fallback: try LangGraph Checkpoint
-        boss_graph = request.app.state.boss_graph
-        config = {"configurable": {"thread_id": thread_id}}
-        try:
-            state = await boss_graph.aget_state(config)
-            if state is not None and state.values:
-                return _format_state_response(thread_id, state.values)
-        except Exception as e:
-            logger.debug("checkpoint_read_failed", thread_id=thread_id, error=str(e))
-
         raise HTTPException(status_code=404, detail=f"任务不存在: {thread_id}")
 
-    # Derive state from events
+    # Derive state from events (legacy)
     phase = "created"
-    result = None
+    result_text = None
     task_plan = None
     error = None
     hitl_pending = []
@@ -171,7 +290,7 @@ async def get_task_status(thread_id: str, request: Request, _user: UserProfile =
     for evt in events:
         phase = EVENT_PHASE_MAP.get(evt.event_type, phase)
         if evt.event_type == "task.completed":
-            result = evt.payload.get("result")
+            result_text = evt.payload.get("result")
         elif evt.event_type == "task.failed":
             error = evt.payload.get("error")
         elif evt.event_type == "task.plan_ready":
@@ -183,40 +302,9 @@ async def get_task_status(thread_id: str, request: Request, _user: UserProfile =
         "thread_id": thread_id,
         "status": phase,
         "task_plan": task_plan,
-        "result": result,
+        "result": result_text,
         "error": error,
         "hitl_pending": hitl_pending,
-    }
-
-
-def _format_state_response(thread_id: str, values: dict) -> dict:
-    """从状态 dict 构建统一的 API 响应"""
-    phase = values.get("current_phase", "unknown")
-    task_plan = values.get("task_plan")
-    task_outputs = values.get("task_outputs", {})
-    final_output = task_outputs.get("final")
-
-    # 兼容 dict 和 Pydantic 对象
-    plan_dict = None
-    if task_plan:
-        plan_dict = task_plan.model_dump() if hasattr(task_plan, "model_dump") else task_plan
-
-    result = None
-    if final_output:
-        result = final_output.get("full_result") if isinstance(final_output, dict) else final_output.full_result
-
-    hitl_pending = values.get("hitl_pending", [])
-    hitl_list = [
-        h.model_dump() if hasattr(h, "model_dump") else h
-        for h in hitl_pending
-    ]
-
-    return {
-        "thread_id": thread_id,
-        "status": phase,
-        "task_plan": plan_dict,
-        "result": result,
-        "hitl_pending": hitl_list,
     }
 
 
@@ -225,114 +313,74 @@ async def resolve_hitl(
     thread_id: str,
     req: HiTLResolveRequest,
     request: Request,
-    _user: UserProfile = Depends(get_current_user),
+    user: UserProfile = Depends(get_current_user),
 ):
-    """用户回应 HiTL 请求 — 记录决定 + 恢复 Graph 执行"""
-    if not await verify_thread_ownership(thread_id, _user.id):
-        raise HTTPException(status_code=404, detail="任务不存在")
-    hitl_gateway = request.app.state.hitl_gateway
-    boss_graph = request.app.state.boss_graph
+    """
+    用户回应 HiTL 请求 (v2 — 转发到 /resume)
 
-    # 记录用户决定
-    hitl_gateway.record_response(
-        request_id=req.request_id,
-        decision=req.decision,
-        feedback=req.feedback,
+    为保持向后兼容，将旧的 HiTL 接口转发到新的 resume 接口
+    """
+    resume_req = ResumeRequest(
+        action=req.decision,
+        data={"request_id": req.request_id, "feedback": req.feedback},
     )
 
-    # 恢复 Graph 执行
-    config = {"configurable": {"thread_id": thread_id}}
-    try:
-        from core.state import HiTLResponse
-
-        response = HiTLResponse(
-            request_id=req.request_id,
-            decision=req.decision,
-            feedback=req.feedback,
-        )
-
-        # Derive source_phase from the last hitl.request event (not hardcoded)
-        events = await get_thread_events(thread_id)
-        source_phase = "executing"  # safe default
-        for evt in reversed(events):
-            if evt.event_type == "hitl.request":
-                source_phase = (
-                    evt.payload.get("request", {})
-                    .get("context", {})
-                    .get("source_phase", "executing")
-                )
-                break
-
-        await boss_graph.aupdate_state(
-            config,
-            {
-                "hitl_resolved": [response],
-                "hitl_pending": [],
-                "current_phase": source_phase,
-            },
-        )
-
-        # Notify via SSE that execution is resuming
-        sse_manager = getattr(request.app.state, "sse_manager", None)
-        if sse_manager:
-            persisted = await persist_event(
-                thread_id, _user.id, "task.executing",
-                {"thread_id": thread_id, "task_id": "resume", "persona": "system"},
-            )
-            await sse_manager.send_to_user(_user.id, persisted)
-
-        # Ensure active_tasks has entry (may be missing if server restarted)
-        if thread_id not in request.app.state.active_tasks:
-            request.app.state.active_tasks[thread_id] = {"task": None, "user_id": _user.id}
-        task_record = request.app.state.active_tasks[thread_id]
-
-        async def _resume():
-            try:
-                await boss_graph.ainvoke(None, config=config)
-            except Exception as e:
-                logger.error("hitl_resume_failed", thread_id=thread_id, error=str(e))
-            finally:
-                request.app.state.active_tasks.pop(thread_id, None)
-
-        task = asyncio.create_task(_resume())
-        if isinstance(task_record, dict):
-            task_record["task"] = task
-
-        return {"status": "resumed", "request_id": req.request_id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    return await resume_task(thread_id, resume_req, request, user)
 
 
 @router.post("/tasks/{thread_id}/cancel")
 async def cancel_task(
     thread_id: str,
     request: Request,
-    _user: UserProfile = Depends(get_current_user),
+    user: UserProfile = Depends(get_current_user),
 ):
-    """Cancel a running task."""
-    if not await verify_thread_ownership(thread_id, _user.id):
-        raise HTTPException(status_code=404, detail="任务不存在")
-    task_record = request.app.state.active_tasks.get(thread_id)
-    if not task_record or not isinstance(task_record, dict):
-        raise HTTPException(status_code=404, detail="任务不存在")
+    """
+    取消任务 (v2)
 
-    task = task_record.get("task")
-    if task and not task.done():
-        task.cancel()
-        logger.info("task_cancelled", thread_id=thread_id)
+    只更新数据库状态，Worker 检测到状态变化会停止执行
+    """
+    async with get_session() as session:
+        # 检查权限
+        result = await session.execute(
+            text("SELECT user_id, status FROM tasks WHERE thread_id = :thread_id"),
+            {"thread_id": thread_id},
+        )
+        task = result.fetchone()
 
-        # Persist cancellation event
-        sse_manager = getattr(request.app.state, "sse_manager", None)
-        if sse_manager:
-            persisted = await persist_event(
-                thread_id, _user.id, "task.failed",
-                {"thread_id": thread_id, "task_id": "cancel", "error": "任务已被用户取消"},
-            )
-            await sse_manager.send_to_user(_user.id, persisted)
+        if not task:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        if task.user_id != user.id:
+            raise HTTPException(status_code=403, detail="无权操作此任务")
 
-        return {"status": "cancelled"}
+        if task.status in ("completed", "failed"):
+            return {"status": "already_done"}
 
-    return {"status": "already_done"}
+        # 更新状态为 failed
+        await session.execute(
+            text("""
+                UPDATE tasks SET status = 'failed', updated_at = NOW()
+                WHERE thread_id = :thread_id
+                AND status NOT IN ('completed', 'failed')
+            """),
+            {"thread_id": thread_id},
+        )
+
+        # 持久化取消事件
+        await persist_and_notify(
+            session,
+            thread_id,
+            user.id,
+            {
+                "type": "task.failed",
+                "data": {"thread_id": thread_id, "error": "任务已被用户取消"},
+            },
+        )
+
+        await session.commit()
+
+    logger.info("task_cancelled", thread_id=thread_id, user_id=user.id)
+
+    return {"status": "cancelled"}
 
 
 # ============================================
@@ -341,7 +389,34 @@ async def cancel_task(
 
 @router.get("/threads")
 async def list_threads(request: Request, user: UserProfile = Depends(get_current_user)):
-    """List user's threads (from events table)."""
+    """List user's threads (from tasks table + events table)."""
+    async with get_session() as session:
+        # 优先从 tasks 表获取
+        result = await session.execute(
+            text("""
+                SELECT thread_id, intent, status, created_at, updated_at
+                FROM tasks
+                WHERE user_id = :user_id
+                ORDER BY updated_at DESC
+                LIMIT 100
+            """),
+            {"user_id": user.id},
+        )
+        tasks = result.fetchall()
+
+        if tasks:
+            return [
+                {
+                    "thread_id": t.thread_id,
+                    "intent": t.intent,
+                    "status": t.status,
+                    "created_at": t.created_at.isoformat() if t.created_at else None,
+                    "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+                }
+                for t in tasks
+            ]
+
+    # Fallback: 从 events 表获取（旧数据）
     threads = await list_user_threads(user.id)
     return threads
 
@@ -364,21 +439,31 @@ async def get_thread_events_api(
 async def delete_thread_api(
     thread_id: str,
     request: Request,
-    _user: UserProfile = Depends(get_current_user),
+    user: UserProfile = Depends(get_current_user),
 ):
     """删除对话及其所有事件"""
-    # Cancel running task if any
-    task_record = request.app.state.active_tasks.get(thread_id)
-    if task_record and isinstance(task_record, dict):
-        task = task_record.get("task")
-        if task and not task.done():
-            task.cancel()
-        request.app.state.active_tasks.pop(thread_id, None)
+    async with get_session() as session:
+        # 删除 tasks 表记录
+        await session.execute(
+            text("DELETE FROM tasks WHERE thread_id = :thread_id AND user_id = :user_id"),
+            {"thread_id": thread_id, "user_id": user.id},
+        )
 
-    deleted = await delete_thread(thread_id, _user.id)
+        # 删除 resume_requests 表记录
+        await session.execute(
+            text("DELETE FROM resume_requests WHERE thread_id = :thread_id"),
+            {"thread_id": thread_id},
+        )
+
+        await session.commit()
+
+    # 删除 events 表记录
+    deleted = await delete_thread(thread_id, user.id)
+
     if deleted == 0:
         raise HTTPException(status_code=404, detail="对话不存在")
-    logger.info("thread_deleted", thread_id=thread_id, user_id=_user.id)
+
+    logger.info("thread_deleted", thread_id=thread_id, user_id=user.id)
     return {"status": "deleted"}
 
 

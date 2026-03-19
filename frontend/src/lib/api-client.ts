@@ -54,8 +54,9 @@ async function request<T>(path: string, options?: RequestInit, _retried = false)
         useAuthStore.getState().setUser(user);
         return request<T>(path, options, true);
       }
-      // Refresh failed — redirect to login
-      window.location.href = "/login";
+      // Refresh failed — redirect to login with return URL
+      const returnUrl = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.href = `/login?returnUrl=${returnUrl}`;
     }
     const body = await res.text();
     throw new ApiError(res.status, body);
@@ -67,7 +68,8 @@ async function request<T>(path: string, options?: RequestInit, _retried = false)
 export interface ThreadSummary {
   thread_id: string;
   intent: string;
-  latest_phase: string;
+  status: string;  // Backend returns 'status' as the phase
+  latest_phase?: string;  // May not be present in API response
   result: string | null;
   created_at: string;
   updated_at: string;

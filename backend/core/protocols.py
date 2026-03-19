@@ -4,14 +4,18 @@ Thin abstraction for runtime portability.
 
 These Protocol interfaces describe the minimal contract that Usami's
 orchestration layer depends on. The current LangGraph-based implementation
-satisfies these interfaces naturally (ainvoke, aget_state, aupdate_state).
+satisfies these interfaces naturally.
 
-To migrate to a different runtime, implement these 3 Protocols — no
+v2 更新:
+- 移除 aupdate_state（由 Command(resume=...) 模式替代）
+- 添加 astream 用于流式输出
+
+To migrate to a different runtime, implement these Protocols — no
 changes needed in boss.py, nodes.py, or routes.py.
 """
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, AsyncIterator, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -21,12 +25,12 @@ class AgentRuntime(Protocol):
     LangGraph's compiled StateGraph satisfies this via:
     - ainvoke(state, config) -> dict
     - aget_state(config) -> StateSnapshot
-    - aupdate_state(config, updates) -> None
+    - astream(state, config) -> AsyncIterator (v2)
     """
 
     async def ainvoke(self, state: dict | None, config: dict | None = None) -> dict: ...
     async def aget_state(self, config: dict) -> Any: ...
-    async def aupdate_state(self, config: dict, updates: dict) -> None: ...
+    def astream(self, state: dict | None, config: dict | None = None) -> AsyncIterator[Any]: ...
 
 
 @runtime_checkable

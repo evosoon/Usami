@@ -53,7 +53,6 @@ sandbox:
 ```
 
 **Implemented tools** (have code in BUILTIN_TOOL_MAP): `web_search`, `knowledge_search`, `file_write`.
-**Declared but NOT implemented**: `send_notification` — will log warning, won't crash.
 
 ### Adding a new tool
 

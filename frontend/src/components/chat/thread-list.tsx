@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,6 +37,7 @@ export function ThreadList() {
   const activeThreadId = useThreadStore((s) => s.activeThreadId);
   const setActiveThread = useThreadStore((s) => s.setActiveThread);
   const removeThread = useThreadStore((s) => s.removeThread);
+  const restoreThread = useThreadStore((s) => s.restoreThread);
   const t = useTranslations();
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
@@ -48,11 +50,15 @@ export function ThreadList() {
     if (!pendingDeleteId) return;
     const threadId = pendingDeleteId;
     setPendingDeleteId(null);
-    removeThread(threadId);
+    const removed = removeThread(threadId);
     try {
       await api.deleteThread(threadId);
     } catch {
-      // Thread already removed from UI — non-fatal
+      // Restore thread on API failure
+      if (removed) {
+        restoreThread(removed);
+        toast.error(t("chat.deleteFailed"));
+      }
     }
   }
 

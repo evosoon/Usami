@@ -132,6 +132,30 @@ class Event(Base):
     created_at = Column(DateTime, server_default=func.now())
 
 
+class Task(Base):
+    """Persistent task state — replaces in-memory active_tasks (v2 refactor)"""
+    __tablename__ = "tasks"
+
+    thread_id = Column(String(64), primary_key=True)
+    user_id = Column(String(64), nullable=False, index=True)
+    intent = Column(Text, nullable=False)
+    status = Column(String(20), nullable=False, server_default="pending")
+    # status ∈ {pending, running, interrupted, resuming, completed, failed}
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class ResumeRequest(Base):
+    """Persistent HiTL resume requests — Worker 崩溃后可恢复 (v2 refactor)"""
+    __tablename__ = "resume_requests"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    thread_id = Column(String(64), nullable=False, index=True)
+    resume_value = Column(JSON, nullable=False)
+    consumed = Column(Boolean, nullable=False, server_default="false")
+    created_at = Column(DateTime, server_default=func.now())
+
+
 # ============================================
 # Database Initialization
 # ============================================

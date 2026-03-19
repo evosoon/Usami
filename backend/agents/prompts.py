@@ -103,12 +103,13 @@ UPSTREAM_RESULT_BLOCK = "\n--- Result from {persona} ---\n{summary}\n"
 UPSTREAM_CONTEXT_HEADER = "Upstream task results:{upstream_context}"
 
 # HumanMessage template for persona task execution
-TASK_EXECUTION_TEMPLATE = """Task: {title}
-Description: {description}
+# CRITICAL: Include user_intent so Persona sees the actual user input
+TASK_EXECUTION_TEMPLATE = """User's request: {user_intent}
 
+Task: {title}
+Instructions: {description}
 {upstream_section}
-
-Please execute this task and output the result."""
+Respond directly to the user's request. Match the language of the user (if they write in Chinese, respond in Chinese)."""
 
 # Fallback task title when plan parsing fails
 FALLBACK_TASK_TITLE = "Direct answer"

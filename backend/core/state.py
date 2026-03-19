@@ -1,19 +1,22 @@
 """
 Usami — 全局 State Schema
-Pre-mortem F3 修正: 结构化消息传递，非全局大 dict
+v2 Refactor: TypedDict + Annotated reducers for LangGraph
 
 设计原则:
 - Agent 间传递「信封」(summary + reference)，不是「全文档」
 - 每个 Task 的输出独立隔离
 - Boss 通过 summary 做决策，需要详情时按 reference 获取
+- 图拓扑本身就是 phase，不再手动跟踪 current_phase
+- interrupt() 管理 HiTL，不再手动管理 hitl_pending
 """
 
 from __future__ import annotations
 
+import operator
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any, TypedDict
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
 # ============================================
 # Task & Plan Schema
@@ -47,11 +50,15 @@ class TaskPlan(BaseModel):
     tasks: list[Task]
 
     def get_ready_tasks(self, completed_ids: set[str]) -> list[Task]:
-        """获取所有依赖已满足、可以执行的任务"""
+        """获取所有依赖已满足、可以执行的任务
+
+        Note: 使用 completed_ids 判断任务是否完成，不依赖 task.status 字段
+        因为 execute_node 只更新 completed_task_ids，不修改 task.status
+        """
         return [
             t for t in self.tasks
-            if t.status == TaskStatus.PENDING
-            and all(dep in completed_ids for dep in t.dependencies)
+            if t.task_id not in completed_ids  # 未完成
+            and all(dep in completed_ids for dep in t.dependencies)  # 依赖已满足
         ]
 
 
@@ -107,48 +114,61 @@ class HiTLResponse(BaseModel):
 
 
 # ============================================
-# Usami Global State (LangGraph State)
+# State Reducers for LangGraph (v2)
 # ============================================
 
-class AgentState(BaseModel):
-    """
-    LangGraph 全局状态对象
-
-    设计原则 (F3 修正):
-    - global_context: 所有 Agent 可见的全局信息
-    - task_outputs: 按 task_id 隔离的输出（信封模式）
-    - hitl_queue: HiTL 请求队列
-    - execution_log: 执行日志（为 Progressive Trust 埋点）
-    """
-    # --- 全局上下文 ---
-    user_intent: str = ""
-    task_plan: TaskPlan | None = None
-    current_phase: str = "init"   # init → planning → executing → aggregating → done
-
-    # --- 任务输出 (信封模式) ---
-    task_outputs: dict[str, TaskOutput] = {}
-    completed_task_ids: set[str] = set()
-
-    # --- HiTL ---
-    hitl_pending: list[HiTLRequest] = []
-    hitl_resolved: list[HiTLResponse] = []
-
-    # --- 执行日志 (F8 修正: 为 Progressive Trust 埋数据) ---
-    execution_log: list[dict[str, Any]] = []
-
-    # --- 成本追踪 ---
-    total_tokens: int = 0
-    total_cost_usd: float = 0.0
-
-    class Config:
-        arbitrary_types_allowed = True
+def merge_task_outputs(existing: dict | None, new: dict | None) -> dict:
+    """Reducer: 合并 task_outputs，不覆盖已有结果"""
+    existing = existing or {}
+    new = new or {}
+    return {**existing, **new}
 
 
 # ============================================
-# Event Phase Mapping (single source of truth)
+# BossState (LangGraph TypedDict — v2 refactor)
+# ============================================
+
+class BossState(TypedDict, total=False):
+    """
+    LangGraph v2 状态对象 — 使用 TypedDict + Annotated reducers
+
+    设计原则:
+    - 删除 current_phase: 图拓扑本身就是 phase
+    - 删除 hitl_pending/hitl_resolved: interrupt() 管理 HiTL
+    - 使用 Annotated reducers: 支持并行节点安全写入
+
+    节点返回 partial dict，由 reducer 合并到完整 state
+    """
+    # ── 核心输入 ──
+    user_intent: str
+    thread_id: str
+
+    # ── Plan & Execution ──
+    task_plan: TaskPlan | None
+    task_outputs: Annotated[dict, merge_task_outputs]   # reducer: merge
+    completed_task_ids: Annotated[list, operator.add]    # reducer: append
+
+    # ── 结果 ──
+    final_result: str | None
+
+    # ── 追问上下文 ──
+    previous_result: str | None
+
+
+# ============================================
+# Event Phase Mapping (v2: phase.change + legacy support)
 # ============================================
 
 EVENT_PHASE_MAP: dict[str, str] = {
+    # v2 事件类型
+    "phase.change": "dynamic",        # phase 在 payload 中
+    "llm.token": "executing",         # 瞬态事件
+    "interrupt": "hitl_waiting",
+    "task.completed_single": "executing",
+    "task.failed_single": "executing",
+    "node.completed": "executing",
+
+    # Legacy 事件类型 (向后兼容)
     "task.created": "created",
     "task.planning": "planning",
     "task.planning_chunk": "planning",

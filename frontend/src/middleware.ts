@@ -20,7 +20,10 @@ export function middleware(request: NextRequest) {
   // backend verifies the full token on every API call)
   if (pathname.startsWith("/admin")) {
     try {
-      const payload = JSON.parse(atob(token.split(".")[1]));
+      // JWT uses base64url encoding, convert to standard base64 for atob()
+      const base64Url = token.split(".")[1];
+      const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+      const payload = JSON.parse(atob(base64));
       if (payload.role !== "admin") {
         return NextResponse.redirect(new URL("/chat", request.url));
       }

@@ -75,6 +75,59 @@ public/
 └── sw.js                        # Service Worker for push notifications
 ```
 
+## v2 Architecture Overview
+
+v2 引入 **Worker-driven model**，前端通过双通道接收事件：
+
+```
+┌─────────────────┐
+│   Browser       │
+│   (React)       │
+│                 │
+│  EventSource ◄──┼── PostgreSQL events (seq, persisted)
+│       +         │
+│  EventSource ◄──┼── Redis pub/sub (llm.token, transient)
+│       │         │
+│   thread-store  │
+└────────┬────────┘
+         │
+   useDerivedMessages()
+```
+
+### Dual-Channel Event Types
+
+| Channel | Events | Characteristics |
+|---------|--------|-----------------|
+| **PostgreSQL** | `phase.change`, `interrupt`, `task.completed`, `node.completed` | Has `seq`, replayable, persisted |
+| **Redis pub/sub** | `llm.token` | No `seq`, transient, fire-and-forget |
+
+### v2 Event Types
+
+```typescript
+// 持久化事件 (有 seq)
+| "phase.change"        // 统一的 phase 切换，替代多个 task.* 事件
+| "interrupt"           // HiTL 中断，替代 hitl.request
+| "task.completed_single" // 单个子任务完成
+| "task.failed_single"    // 单个子任务失败
+| "node.completed"        // 图节点完成
+
+// 瞬态事件 (无 seq，不持久化)
+| "llm.token"           // LLM streaming token，按 node 区分
+```
+
+### Thread State (v2 additions)
+
+```typescript
+interface Thread {
+  // v2 新增字段
+  pendingInterrupt: InterruptValue | null;  // interrupt payload
+  streamingPlan: string;      // node === "plan" 的 streaming
+  streamingAggregate: string; // node === "aggregate" 的 streaming
+  activeNode: string;         // 当前活跃节点
+  progress: { completed: number; total: number } | null;
+}
+```
+
 ## Architecture patterns (7 patterns to internalize)
 
 ### 1. Event-driven state (SSE → Zustand → React)
@@ -86,6 +139,8 @@ Backend SSE event → UsamiSSE → sse-store → thread-store.appendEvent() → 
 - All SSE events flow into `thread-store` as an **append-only event log**.
 - `EVENT_TO_PHASE` mapping automatically transitions thread phase.
 - `appendEvent()` extracts `result` from `task.completed` events, `pendingHitl` from `hitl.request` events, and accumulates streaming chunks.
+- **v2**: `llm.token` events are NOT appended to events array (transient), only update `streamingPlan` or `streamingAggregate`.
+- **v2**: `phase.change` events carry phase in payload, not event type.
 - `useDerivedMessages()` hook transforms raw events → chat UI messages (pure derived state).
 - Never manually manage message arrays — messages are always derived from events.
 - History loaded from REST (`GET /threads`) on mount, replayed from `GET /threads/{id}/events`.
@@ -105,14 +160,18 @@ Backend SSE event → UsamiSSE → sse-store → thread-store.appendEvent() → 
 
 - **Primary**: SSE delivers all state updates in real-time via `EventSource` with `withCredentials: true`.
 - **Auth**: Cookie-based (httpOnly cookies auto-sent by browser). No token management in JS.
-- **Reconnect**: Manual reconnect with exponential backoff (1s → 30s max). `Last-Event-ID` query param for missed event replay.
+- **Reconnect**: Manual reconnect with exponential backoff (1s → 30s max). `last_seq` query param for missed event replay.
+- **v2 Timing**: Backend uses "LISTEN first, query later" — client receives all events without loss.
+- **v2 Dual-channel**: Persistent events via PostgreSQL pg_notify, transient (`llm.token`) via Redis pub/sub.
 - **Multi-tab**: Same user, all tabs receive events (per-user directed routing on backend).
 - **No periodic polling** — REST only fetches on mount. `staleTime: Infinity` on task detail query.
 - **Disconnect UI**: `ConnectionStatusBar` shows yellow/red bar; chat input disabled when disconnected.
 
 ### 4. Global HiTL watcher
 
-`<HiTLWatcher />` in `<Providers />` watches **all threads** for `pendingHitl.length > 0`. Auto-opens `<HiTLDialog />` when detected. Guarantees HiTL is never missed regardless of which thread is active.
+`<HiTLWatcher />` in `<Providers />` watches **all threads** for `pendingHitl.length > 0` (legacy) or `pendingInterrupt !== null` (v2). Auto-opens `<HiTLDialog />` when detected. Guarantees HiTL is never missed regardless of which thread is active.
+
+**v2**: `interrupt` events from LangGraph's `interrupt()` carry structured `InterruptValue` with type, message, options, and optional context (failed_tasks, plan preview, etc.).
 
 ### 5. Cookie-based auth with auto-refresh
 
@@ -263,12 +322,20 @@ export function MyComponent({ prop }: { prop: Type }) {
 
 ```typescript
 export type SseEvent =
+  // v2 事件
+  | { type: "phase.change"; thread_id: string; seq?: number; phase: string; ... }
+  | { type: "llm.token"; thread_id: string; content: string; node: string }
+  | { type: "interrupt"; thread_id: string; seq: number; value: InterruptValue }
+  | { type: "task.completed_single"; thread_id: string; seq?: number; task_id: string; ... }
+  // Legacy 事件
   | { type: "task.created"; thread_id: string; seq: number; intent: string }
   | { type: "task.completed"; thread_id: string; seq: number; result?: string }
   | ...
 ```
 
-Every SSE event includes a `seq` number (per-thread monotonic) for replay support.
+**v2 Event Characteristics**:
+- Persistent events (PostgreSQL): Have `seq` number for replay, deduplicated by seq
+- Transient events (`llm.token`): No `seq`, routed via Redis pub/sub, not persisted
 
 When backend Pydantic models change, update `types/api.ts` and `types/sse.ts` accordingly.
 
@@ -278,9 +345,10 @@ When backend Pydantic models change, update `types/api.ts` and `types/sse.ts` ac
 
 - Uses `EventSource` with `withCredentials: true` (cookies auto-sent).
 - Manual reconnect with exponential backoff: 1s → 2s → 4s → ... → 30s max.
-- `lastEventId` tracked for replay on reconnect via `?last_event_id=` query param.
+- **v2**: `last_seq` query param for replay on reconnect (replaces `Last-Event-ID`).
 - URL auto-detected from `window.location` at runtime (direct to backend port, bypasses Next.js rewrite).
 - No `send()` method — client→server communication via REST only.
+- **v2**: Receives dual-channel events merged into single stream (backend handles channel merging).
 
 ## Routing
 

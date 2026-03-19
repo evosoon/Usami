@@ -1,6 +1,11 @@
 """
 Usami — Personal AI Operating System
-FastAPI 入口文件
+FastAPI 入口文件 (v2 Refactor)
+
+v2 架构变化:
+- Worker 进程独立执行 LangGraph 图（不在 API 进程内执行）
+- 事件通过 PostgreSQL + pg_notify 和 Redis pub/sub 分发
+- 删除 active_tasks, sse_event_callback, on_event 参数
 
 启动方式: uvicorn main:app --reload
 """
@@ -25,11 +30,9 @@ from api.sse import SSEConnectionManager
 from api.sse import router as sse_router
 from core.auth import init_auth, seed_admin_user
 from core.config import load_config
-from core.event_store import persist_event
-from core.hitl import HiTLGateway
 from core.memory import init_database
 from core.persona_factory import PersonaFactory
-from core.push import init_push, send_push
+from core.push import init_push
 from core.tool_registry import ToolRegistry, init_tool_config
 from scheduler.cron import init_scheduler
 
@@ -38,7 +41,7 @@ logger = structlog.get_logger()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期管理"""
+    """应用生命周期管理 (v2)"""
     # --- Startup ---
     config = load_config()
     app.state.config = config
@@ -64,7 +67,7 @@ async def lifespan(app: FastAPI):
         app.state.redis_client = redis_client
         logger.info("redis_initialized")
 
-        # 初始化 EventBus (仅创建实例，MVP 暂不启动监听)
+        # 初始化 EventBus (Redis Pub/Sub for webhook-triggered tasks)
         from scheduler.events import EventBus
         app.state.event_bus = EventBus(redis_client)
         logger.info("event_bus_initialized")
@@ -90,23 +93,16 @@ async def lifespan(app: FastAPI):
     )
     app.state.persona_factory = persona_factory
 
-    # 初始化 HiTL Gateway
-    hitl_gateway = HiTLGateway(
-        budget_config=config.routing.get("budget", {})
-    )
-    app.state.hitl_gateway = hitl_gateway
-
-    # 初始化 SSE 连接管理器 (在 boss_graph 之前, 用于回调)
+    # 初始化 SSE 连接管理器 (v2: 仍用于 legacy SSEConnectionManager, 主要用途是 health check)
     sse_manager = SSEConnectionManager(redis_client=redis_client)
     app.state.sse_manager = sse_manager
 
-    # Start Redis subscription for cross-worker SSE distribution
-    if redis_client:
-        import asyncio as _asyncio
-        _sse_sub_task = _asyncio.create_task(sse_manager.start_subscription())
-        app.state._sse_sub_task = _sse_sub_task
+    # NOTE: Redis subscription for SSE is no longer needed in v2 architecture
+    # (Worker uses pg_notify directly). The SSEConnectionManager is retained
+    # for backwards compatibility only.
 
-    # 构建 Boss Graph（带 Checkpoint 持久化 + SSE 事件回调）
+    # 构建 Boss Graph (v2: 只需 persona_factory 和 checkpointer)
+    # Worker 进程会独立构建和执行图，这里主要用于 health check 和 scheduler
     checkpointer = None
     try:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -118,62 +114,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("checkpoint_saver_skipped", error=str(e))
 
-    async def sse_event_callback(event_type: str, data: dict) -> None:
-        """Boss Graph → persist event → push to SSE connections + Push notifications"""
-        thread_id = data.get("thread_id", "")
-
-        # Look up user_id from active_tasks
-        task_record = app.state.active_tasks.get(thread_id, {})
-        user_id = task_record.get("user_id") if isinstance(task_record, dict) else None
-        if not user_id:
-            logger.warning("event_no_user", event_type=event_type, thread_id=thread_id)
-            return
-
-        # Persist to DB
-        try:
-            persisted = await persist_event(thread_id, user_id, event_type, data)
-        except Exception as e:
-            logger.error("event_persist_failed", event_type=event_type, error=str(e))
-            return
-
-        # Route to user's SSE connections (via Redis for multi-worker)
-        await sse_manager.broadcast_event(user_id, persisted)
-
-        # Send browser push notifications for key events
-        if event_type in ("task.completed", "task.failed", "hitl.request"):
-            push_titles = {
-                "task.completed": "任务完成",
-                "task.failed": "任务失败",
-                "hitl.request": "需要您的确认",
-            }
-            push_bodies = {
-                "task.completed": data.get("result", "")[:200] if data.get("result") else "任务已完成",
-                "task.failed": data.get("error", "任务执行失败"),
-                "hitl.request": "有一个任务需要您的人工审核",
-            }
-            try:
-                await send_push(
-                    user_id=user_id,
-                    title=push_titles[event_type],
-                    body=push_bodies[event_type],
-                    url=f"/tasks/{thread_id}" if thread_id else "/chat",
-                )
-            except Exception as e:
-                logger.warning("push_notification_failed", event=event_type, error=str(e))
-
+    # v2: build_boss_graph 只接受 persona_factory 和 checkpointer
     boss_graph = build_boss_graph(
         persona_factory=persona_factory,
-        hitl_gateway=hitl_gateway,
         checkpointer=checkpointer,
-        on_event=sse_event_callback,
     )
     app.state.boss_graph = boss_graph
 
-    # 活跃任务追踪 (thread_id → {user_id, task})
-    app.state.active_tasks: dict[str, Any] = {}
-
-    # 初始化定时调度器
-    scheduler = init_scheduler(config.scheduler, boss_graph=boss_graph, active_tasks=app.state.active_tasks)
+    # 初始化定时调度器 (v2: scheduler 可以通过 pg_notify 触发任务)
+    scheduler = init_scheduler(config.scheduler, boss_graph=boss_graph)
     scheduler.start()
     app.state.scheduler = scheduler
 
@@ -181,11 +130,6 @@ async def lifespan(app: FastAPI):
 
     # --- Shutdown ---
     scheduler.shutdown()
-
-    # Cancel SSE Redis subscription
-    sse_sub = getattr(app.state, "_sse_sub_task", None)
-    if sse_sub and not sse_sub.done():
-        sse_sub.cancel()
 
     # Cleanup checkpointer context manager
     if hasattr(app.state, 'checkpointer_cm'):

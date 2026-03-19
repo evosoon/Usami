@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { api } from "@/lib/api-client";
 import type { PersistedEventDto } from "@/lib/api-client";
-import type { SseEvent } from "@/types/sse";
+import type { SseEvent, InterruptValue } from "@/types/sse";
 import type { TaskPlan, HiTLRequest } from "@/types/api";
 
 export type Phase =
@@ -24,11 +24,17 @@ export interface Thread {
   phase: Phase;
   taskPlan: TaskPlan | null;
   pendingHitl: HiTLRequest[];
+  pendingInterrupt: InterruptValue | null;
   result: string | null;
   error: string | null;
+  streamingPlan: string;
+  streamingAggregate: string;
+  activeNode: string;
   streamingResult: string;
   streamingPlanning: string;
   lastHeartbeat: number | null;
+  pendingIntent: string | null;
+  progress: { completed: number; total: number } | null;
 }
 
 interface ThreadStore {
@@ -36,57 +42,143 @@ interface ThreadStore {
   activeThreadId: string | null;
   setActiveThread: (threadId: string | null) => void;
   createThread: (threadId: string, intent: string) => void;
-  prepareFollowUp: (threadId: string) => void;
+  prepareFollowUp: (threadId: string, intent: string) => void;
   appendEvent: (threadId: string, event: SseEvent) => void;
-  updateFromRest: (threadId: string, data: Partial<Pick<Thread, "taskPlan" | "pendingHitl" | "result">>) => void;
+  updateFromRest: (threadId: string, data: Partial<Pick<Thread, "taskPlan" | "pendingHitl" | "pendingInterrupt" | "result">>) => void;
   getActiveThread: () => Thread | undefined;
   loadThreads: () => Promise<void>;
   loadThreadEvents: (threadId: string) => Promise<void>;
-  removeThread: (threadId: string) => void;
+  removeThread: (threadId: string) => Thread | undefined;
+  restoreThread: (thread: Thread) => void;
 }
 
-const EVENT_TO_PHASE: Record<string, Phase> = {
-  "task.created": "created",
-  "task.planning": "planning",
-  "task.plan_ready": "planned",
-  "task.executing": "executing",
-  "task.progress": "executing",
-  "task.aggregating": "aggregating",
-  "task.completed": "completed",
-  "task.failed": "failed",
-  "hitl.request": "hitl_waiting",
-};
+function createEmptyThread(threadId: string, intent: string = ""): Thread {
+  return {
+    threadId,
+    intent,
+    createdAt: Date.now(),
+    events: [],
+    phase: "created",
+    taskPlan: null,
+    pendingHitl: [],
+    pendingInterrupt: null,
+    result: null,
+    error: null,
+    streamingPlan: "",
+    streamingAggregate: "",
+    activeNode: "",
+    streamingResult: "",
+    streamingPlanning: "",
+    lastHeartbeat: null,
+    pendingIntent: null,
+    progress: null,
+  };
+}
 
+/**
+ * Convert persisted event DTO to SseEvent
+ * Backend format: { event_type, payload: { type, data: {...} } }
+ */
 function persistedToSseEvent(dto: PersistedEventDto): SseEvent {
-  const p = dto.payload;
+  const eventType = dto.event_type;
+  const payload = dto.payload || {};
+  const data = (payload.data as Record<string, unknown>) || {};
   const base = { thread_id: dto.thread_id, seq: dto.seq };
-  switch (dto.event_type) {
+
+  switch (eventType) {
     case "task.created":
-      return { type: "task.created", ...base, intent: (p.intent as string) ?? "" };
+      return {
+        type: "task.created",
+        ...base,
+        intent: (data.intent as string) || "",
+      };
+
+    case "phase.change":
+      return {
+        type: "phase.change",
+        ...base,
+        phase: (data.phase as string) || "unknown",
+        plan_id: data.plan_id as string | undefined,
+        task_count: data.task_count as number | undefined,
+        tasks: data.tasks as unknown[] | undefined,
+        total_completed: data.total_completed as number | undefined,
+        total_tasks: data.total_tasks as number | undefined,
+        round: data.round as number | undefined,
+      };
+
+    case "task.completed":
+      return {
+        type: "task.completed",
+        ...base,
+        result: (data.result as string) || undefined,
+      };
+
+    case "task.failed":
+      return {
+        type: "task.failed",
+        ...base,
+        error: (data.error as string) || undefined,
+      };
+
+    case "task.completed_single":
+      return {
+        type: "task.completed_single",
+        ...base,
+        task_id: (data.task_id as string) || "",
+        persona: (data.persona as string) || "",
+        summary: data.summary as string | undefined,
+      };
+
+    case "task.failed_single":
+      return {
+        type: "task.failed_single",
+        ...base,
+        task_id: (data.task_id as string) || "",
+        error: (data.error as string) || "",
+      };
+
+    case "node.completed":
+      return {
+        type: "node.completed",
+        ...base,
+        node: (data.node as string) || "",
+      };
+
+    case "interrupt":
+      return {
+        type: "interrupt",
+        ...base,
+        value: (data.value as InterruptValue) || { type: "unknown", message: "", options: [] },
+      };
+
+    // Legacy events
     case "task.planning":
       return { type: "task.planning", ...base };
-    case "task.planning_chunk":
-      return { type: "task.planning_chunk", ...base, chunk: (p.chunk as string) ?? "" };
     case "task.plan_ready":
-      return { type: "task.plan_ready", ...base, plan_id: (p.plan_id as string) ?? "", task_count: (p.task_count as number) ?? 0 };
+      return {
+        type: "task.plan_ready",
+        ...base,
+        plan_id: (payload.plan_id as string) || "",
+        task_count: (payload.task_count as number) || 0,
+      };
     case "task.executing":
-      return { type: "task.executing", ...base, task_id: (p.task_id as string) ?? "", persona: (p.persona as string) ?? "" };
-    case "task.progress":
-      return { type: "task.progress", ...base, task_id: (p.task_id as string) ?? "", status: (p.status as string) ?? "", persona: (p.persona as string) ?? "" };
+      return {
+        type: "task.executing",
+        ...base,
+        task_id: (data.task_id as string) || (payload.task_id as string) || "",
+        persona: (data.persona as string) || (payload.persona as string) || "",
+      };
     case "task.aggregating":
       return { type: "task.aggregating", ...base };
-    case "task.result_chunk":
-      return { type: "task.result_chunk", ...base, chunk: (p.chunk as string) ?? "" };
-    case "task.completed":
-      return { type: "task.completed", ...base, result: (p.result as string) ?? undefined };
-    case "task.failed":
-      return { type: "task.failed", ...base, task_id: (p.task_id as string) ?? "", error: (p.error as string) ?? "" };
-    case "task.heartbeat":
-      return { type: "task.heartbeat", ...base, phase: (p.phase as string) ?? "", elapsed_s: (p.elapsed_s as number) ?? 0 };
     case "hitl.request":
-      return { type: "hitl.request", ...base, request: p.request as HiTLRequest };
+      return {
+        type: "hitl.request",
+        ...base,
+        request: (payload.request as HiTLRequest) || { request_id: "", hitl_type: "approval", title: "", description: "" },
+      };
+
     default:
-      // Fallback for unknown event types — treat as heartbeat to avoid losing data
+      // Fallback - return as task.heartbeat to avoid type errors
       return { type: "task.heartbeat", ...base, phase: "unknown", elapsed_s: 0 };
   }
 }
@@ -100,24 +192,11 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   createThread: (threadId, intent) =>
     set((state) => {
       const threads = new Map(state.threads);
-      threads.set(threadId, {
-        threadId,
-        intent,
-        createdAt: Date.now(),
-        events: [],
-        phase: "created",
-        taskPlan: null,
-        pendingHitl: [],
-        result: null,
-        error: null,
-        streamingResult: "",
-        streamingPlanning: "",
-        lastHeartbeat: null,
-      });
+      threads.set(threadId, createEmptyThread(threadId, intent));
       return { threads, activeThreadId: threadId };
     }),
 
-  prepareFollowUp: (threadId) =>
+  prepareFollowUp: (threadId, intent) =>
     set((state) => {
       const threads = new Map(state.threads);
       const thread = threads.get(threadId);
@@ -128,7 +207,12 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         error: null,
         streamingResult: "",
         streamingPlanning: "",
+        streamingPlan: "",
+        streamingAggregate: "",
         pendingHitl: [],
+        pendingInterrupt: null,
+        pendingIntent: intent,
+        progress: null,
       });
       return { threads };
     }),
@@ -136,75 +220,146 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   appendEvent: (threadId, event) =>
     set((state) => {
       const threads = new Map(state.threads);
-      const thread = threads.get(threadId);
+      let thread = threads.get(threadId);
+
+      // Auto-create thread if missing
       if (!thread) {
-        // Auto-create thread from SSE event if missing
         const intent = event.type === "task.created" ? event.intent : "";
-        threads.set(threadId, {
-          threadId,
-          intent,
-          createdAt: Date.now(),
-          events: [event],
-          phase: EVENT_TO_PHASE[event.type] ?? "created",
-          taskPlan: null,
-          pendingHitl: [],
-          result: null,
-          error: event.type === "task.failed" ? event.error : null,
-          streamingResult: "",
-          streamingPlanning: "",
-          lastHeartbeat: null,
-        });
-        const activeThreadId = event.type === "task.created" && !state.activeThreadId
-          ? threadId
-          : state.activeThreadId;
-        return { threads, activeThreadId };
+        thread = createEmptyThread(threadId, intent);
       }
 
-      // Heartbeat: update timestamp only
-      if (event.type === "task.heartbeat") {
-        threads.set(threadId, { ...thread, lastHeartbeat: Date.now() });
-        return { threads };
+      // Process event based on type
+      const updates: Partial<Thread> = {};
+
+      switch (event.type) {
+        case "task.created":
+          updates.intent = event.intent || thread.intent;
+          updates.pendingIntent = null;
+          updates.events = [...thread.events, event];
+          break;
+
+        case "phase.change": {
+          const phase = event.phase as Phase;
+          updates.phase = phase;
+          updates.events = [...thread.events, event];
+
+          // Extract task plan from planned phase
+          if (phase === "planned" && event.tasks) {
+            updates.taskPlan = { tasks: event.tasks } as TaskPlan;
+          }
+          // Extract progress from executing phase
+          if (phase === "executing" && event.total_tasks !== undefined) {
+            updates.progress = {
+              completed: event.total_completed ?? 0,
+              total: event.total_tasks,
+            };
+          }
+          // Reset streaming on phase change
+          if (phase === "aggregating") {
+            updates.streamingAggregate = "";
+            updates.streamingResult = "";
+          } else if (phase === "planning") {
+            updates.streamingPlan = "";
+            updates.streamingPlanning = "";
+          }
+          break;
+        }
+
+        case "task.completed":
+          updates.phase = "completed";
+          updates.result = event.result || null;
+          updates.events = [...thread.events, event];
+          // Clear streaming
+          updates.streamingResult = "";
+          updates.streamingAggregate = "";
+          break;
+
+        case "task.failed":
+          updates.phase = "failed";
+          updates.error = event.error || null;
+          updates.events = [...thread.events, event];
+          break;
+
+        case "task.completed_single":
+        case "task.failed_single":
+        case "node.completed":
+          // Just append to events, don't change phase
+          updates.events = [...thread.events, event];
+          break;
+
+        case "interrupt":
+          updates.phase = "hitl_waiting";
+          updates.pendingInterrupt = event.value;
+          updates.events = [...thread.events, event];
+          break;
+
+        case "llm.token":
+          // Transient - don't append to events, just update streaming
+          updates.activeNode = event.node;
+          if (event.node === "plan") {
+            updates.streamingPlan = thread.streamingPlan + event.content;
+            updates.streamingPlanning = thread.streamingPlanning + event.content;
+          } else if (event.node === "aggregate") {
+            updates.streamingAggregate = thread.streamingAggregate + event.content;
+            updates.streamingResult = thread.streamingResult + event.content;
+          }
+          break;
+
+        case "task.heartbeat":
+          updates.lastHeartbeat = Date.now();
+          break;
+
+        // Legacy events
+        case "task.planning":
+          updates.phase = "planning";
+          updates.events = [...thread.events, event];
+          break;
+
+        case "task.plan_ready":
+          updates.phase = "planned";
+          updates.events = [...thread.events, event];
+          break;
+
+        case "task.executing":
+          updates.phase = "executing";
+          updates.events = [...thread.events, event];
+          break;
+
+        case "task.aggregating":
+          updates.phase = "aggregating";
+          updates.streamingResult = "";
+          updates.events = [...thread.events, event];
+          break;
+
+        case "task.result_chunk":
+          updates.streamingResult = thread.streamingResult + event.chunk;
+          updates.streamingAggregate = thread.streamingAggregate + event.chunk;
+          break;
+
+        case "task.planning_chunk":
+          updates.streamingPlanning = thread.streamingPlanning + event.chunk;
+          updates.streamingPlan = thread.streamingPlan + event.chunk;
+          break;
+
+        case "hitl.request":
+          updates.phase = "hitl_waiting";
+          updates.pendingHitl = [...thread.pendingHitl, event.request];
+          updates.events = [...thread.events, event];
+          break;
+
+        default:
+          // Unknown event - just append
+          updates.events = [...thread.events, event];
       }
 
-      // Streaming result chunk: accumulate without appending to events array
-      if (event.type === "task.result_chunk") {
-        threads.set(threadId, {
-          ...thread,
-          streamingResult: thread.streamingResult + event.chunk,
-        });
-        return { threads };
-      }
+      threads.set(threadId, { ...thread, ...updates });
 
-      // Planning chunk: accumulate streaming planning text
-      if (event.type === "task.planning_chunk") {
-        threads.set(threadId, {
-          ...thread,
-          streamingPlanning: thread.streamingPlanning + event.chunk,
-        });
-        return { threads };
-      }
+      // Auto-set active thread on task.created
+      const activeThreadId = event.type === "task.created" && !state.activeThreadId
+        ? threadId
+        : state.activeThreadId;
 
-      const events = [...thread.events, event];
-      const phase = EVENT_TO_PHASE[event.type] ?? thread.phase;
-      const error = event.type === "task.failed" ? event.error : thread.error;
-      const result = event.type === "task.completed" && event.result ? event.result : thread.result;
-
-      // Reset streaming states on phase transitions
-      const streamingResult = event.type === "task.aggregating" ? ""
-        : event.type === "task.completed" ? ""
-        : thread.streamingResult;
-
-      const streamingPlanning = event.type === "task.plan_ready" ? ""
-        : event.type === "task.completed" ? ""
-        : thread.streamingPlanning;
-
-      // Handle HiTL request — append to pendingHitl
-      const pendingHitl = event.type === "hitl.request"
-        ? [...thread.pendingHitl, event.request]
-        : thread.pendingHitl;
-
-      threads.set(threadId, { ...thread, events, phase, error, result, pendingHitl, streamingResult, streamingPlanning });
-      return { threads };
+      return { threads, activeThreadId };
     }),
 
   updateFromRest: (threadId, data) =>
@@ -236,27 +391,17 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       set((state) => {
         const threads = new Map(state.threads);
         for (const s of summaries) {
-          // Don't overwrite threads that already have live events
           if (threads.has(s.thread_id)) continue;
-          threads.set(s.thread_id, {
-            threadId: s.thread_id,
-            intent: s.intent ?? "",
-            createdAt: new Date(s.created_at).getTime(),
-            events: [],
-            phase: (s.latest_phase as Phase) ?? "created",
-            taskPlan: null,
-            pendingHitl: [],
-            result: s.result ?? null,
-            error: null,
-            streamingResult: "",
-            streamingPlanning: "",
-            lastHeartbeat: null,
-          });
+          const thread = createEmptyThread(s.thread_id, s.intent ?? "");
+          thread.createdAt = new Date(s.created_at).getTime();
+          thread.phase = (s.latest_phase as Phase) ?? (s.status as Phase) ?? "created";
+          thread.result = s.result ?? null;
+          threads.set(s.thread_id, thread);
         }
         return { threads };
       });
     } catch {
-      // Non-fatal: history loading failure shouldn't break the app
+      // Non-fatal
     }
   },
 
@@ -267,42 +412,83 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         const threads = new Map(state.threads);
         const existing = threads.get(threadId);
 
-        // Replay persisted events into thread state (instant, no animation)
+        // Replay events
         let phase: Phase = "created";
         let intent = existing?.intent ?? "";
         let result: string | null = null;
         let error: string | null = null;
+        let taskPlan: TaskPlan | null = null;
         const pendingHitl: HiTLRequest[] = [];
+        let pendingInterrupt: InterruptValue | null = null;
         const events: SseEvent[] = [];
 
         for (const dto of dtos) {
           const event = persistedToSseEvent(dto);
-          // Skip streaming chunks from history — they're transient
-          if (event.type === "task.result_chunk" || event.type === "task.planning_chunk" || event.type === "task.heartbeat") {
+
+          // Skip transient events
+          if (event.type === "task.result_chunk" ||
+              event.type === "task.planning_chunk" ||
+              event.type === "task.heartbeat" ||
+              event.type === "llm.token") {
             continue;
           }
+
           events.push(event);
-          phase = EVENT_TO_PHASE[event.type] ?? phase;
-          if (event.type === "task.created") intent = event.intent;
-          if (event.type === "task.completed") result = event.result ?? null;
-          if (event.type === "task.failed") error = event.error;
-          if (event.type === "hitl.request") pendingHitl.push(event.request);
+
+          // Update state based on event
+          switch (event.type) {
+            case "task.created":
+              if (!intent) intent = event.intent;
+              break;
+            case "phase.change":
+              phase = event.phase as Phase;
+              if (event.tasks) {
+                taskPlan = { tasks: event.tasks } as TaskPlan;
+              }
+              break;
+            case "task.completed":
+              phase = "completed";
+              result = event.result ?? null;
+              break;
+            case "task.failed":
+              phase = "failed";
+              error = event.error ?? null;
+              break;
+            case "interrupt":
+              phase = "hitl_waiting";
+              pendingInterrupt = event.value;
+              break;
+            case "hitl.request":
+              phase = "hitl_waiting";
+              pendingHitl.push(event.request);
+              break;
+            // Legacy
+            case "task.planning":
+              phase = "planning";
+              break;
+            case "task.plan_ready":
+              phase = "planned";
+              break;
+            case "task.executing":
+              phase = "executing";
+              break;
+            case "task.aggregating":
+              phase = "aggregating";
+              break;
+          }
         }
 
-        threads.set(threadId, {
-          threadId,
-          intent,
-          createdAt: existing?.createdAt ?? (dtos[0] ? new Date(dtos[0].created_at).getTime() : Date.now()),
-          events,
-          phase,
-          taskPlan: existing?.taskPlan ?? null,
-          pendingHitl,
-          result,
-          error,
-          streamingResult: "",
-          streamingPlanning: "",
-          lastHeartbeat: null,
-        });
+        const thread = createEmptyThread(threadId, intent);
+        thread.createdAt = existing?.createdAt ?? (dtos[0] ? new Date(dtos[0].created_at).getTime() : Date.now());
+        thread.events = events;
+        thread.phase = phase;
+        thread.taskPlan = taskPlan;
+        thread.pendingHitl = pendingHitl;
+        thread.pendingInterrupt = pendingInterrupt;
+        thread.result = result;
+        thread.error = error;
+
+        threads.set(threadId, thread);
         return { threads };
       });
     } catch {
@@ -310,11 +496,21 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     }
   },
 
-  removeThread: (threadId) =>
+  removeThread: (threadId) => {
+    const thread = get().threads.get(threadId);
     set((state) => {
       const threads = new Map(state.threads);
       threads.delete(threadId);
       const activeThreadId = state.activeThreadId === threadId ? null : state.activeThreadId;
       return { threads, activeThreadId };
+    });
+    return thread;
+  },
+
+  restoreThread: (thread) =>
+    set((state) => {
+      const threads = new Map(state.threads);
+      threads.set(thread.threadId, thread);
+      return { threads };
     }),
 }));

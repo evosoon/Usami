@@ -28,6 +28,14 @@ function markPrevActive(steps: ThinkingStep[], status: "done" | "error") {
   }
 }
 
+/**
+ * Derives chat messages from thread events.
+ *
+ * Supports multi-turn conversations (follow-ups):
+ * - Each task.created event starts a new conversation turn
+ * - Each turn has its own thinking steps and result
+ * - Events are processed in order, not by comparing intents
+ */
 export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
   const t = useTranslations("chat");
 
@@ -35,102 +43,163 @@ export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
     if (!thread) return [];
 
     const messages: ChatMessage[] = [];
-    const steps: ThinkingStep[] = [];
+    let currentSteps: ThinkingStep[] = [];
 
-    // User intent is always first
-    messages.push({
-      id: `${thread.threadId}-user`,
-      role: "user",
-      content: thread.intent,
-    });
+    // Helper to flush accumulated thinking steps as a message
+    const flushThinkingSteps = (idPrefix: string) => {
+      if (currentSteps.length > 0) {
+        messages.push({
+          id: `${idPrefix}-thinking`,
+          role: "system",
+          variant: "thinking",
+          content: "",
+          steps: [...currentSteps],
+        });
+        currentSteps = [];
+      }
+    };
 
-    // Process events: aggregate process events into steps, emit result/error/follow-up separately
+    // Fallback: if no task.created event yet (real-time before SSE arrives), use thread.intent
+    const hasTaskCreated = thread.events.some((e) => e.type === "task.created");
+    if (!hasTaskCreated && thread.intent) {
+      messages.push({
+        id: `${thread.threadId}-user-fallback`,
+        role: "user",
+        content: thread.intent,
+      });
+    }
+
+    // Process events in order
     for (let i = 0; i < thread.events.length; i++) {
       const event = thread.events[i];
       const id = `${thread.threadId}-${i}`;
 
       switch (event.type) {
-        case "task.created":
-          // Follow-up: render subsequent task.created events as user messages
-          if (event.intent && event.intent !== thread.intent) {
-            messages.push({ id, role: "user", content: event.intent });
+        // === v2 事件类型 ===
+        case "phase.change": {
+          const phase = event.phase;
+          if (phase === "planning") {
+            currentSteps.push({ id, label: t("analyzing"), status: "active" });
+          } else if (phase === "planned") {
+            markPrevActive(currentSteps, "done");
+            const taskCount = event.task_count ?? 0;
+            currentSteps.push({ id, label: t("planReady", { count: taskCount }), status: "active" });
+          } else if (phase === "executing") {
+            markPrevActive(currentSteps, "done");
+            const tasks = event.tasks as string[] | undefined;
+            const label = tasks?.length ? t("executingTasks", { count: tasks.length }) : t("executing", { persona: "" });
+            currentSteps.push({ id, label, status: "active" });
+          } else if (phase === "aggregating") {
+            markPrevActive(currentSteps, "done");
+            currentSteps.push({ id, label: t("aggregating"), status: "active" });
+          } else if (phase === "completed") {
+            markPrevActive(currentSteps, "done");
           }
+          break;
+        }
+
+        case "task.completed_single":
+          // 单个子任务完成 — 更新进度
+          markPrevActive(currentSteps, "done");
+          currentSteps.push({
+            id,
+            label: t("taskDone", { task: event.task_id, persona: event.persona }),
+            status: "done",
+          });
+          break;
+
+        case "task.failed_single":
+          markPrevActive(currentSteps, "error");
+          currentSteps.push({
+            id,
+            label: t("taskFailed", { task: event.task_id, error: event.error }),
+            status: "error",
+          });
+          break;
+
+        case "node.completed":
+          // 图节点完成 — 可选显示（通常跳过）
+          break;
+
+        case "interrupt":
+          markPrevActive(currentSteps, "done");
+          currentSteps.push({ id, label: t("hitlWaiting"), status: "active" });
+          break;
+
+        // === Legacy 事件类型 (向后兼容) ===
+        case "task.created":
+          // Flush any pending thinking steps from previous turn (for follow-ups)
+          flushThinkingSteps(id);
+          // Add user message for this turn
+          messages.push({ id, role: "user", content: event.intent });
           break;
 
         case "task.planning":
-          steps.push({ id, label: t("analyzing"), status: "active" });
+          currentSteps.push({ id, label: t("analyzing"), status: "active" });
           break;
 
         case "task.plan_ready":
-          markPrevActive(steps, "done");
-          steps.push({ id, label: t("planReady", { count: event.task_count }), status: "active" });
+          markPrevActive(currentSteps, "done");
+          currentSteps.push({ id, label: t("planReady", { count: event.task_count }), status: "active" });
           break;
 
         case "task.executing":
-          markPrevActive(steps, "done");
-          steps.push({ id, label: t("executing", { persona: event.persona }), status: "active" });
+          markPrevActive(currentSteps, "done");
+          currentSteps.push({ id, label: t("executing", { persona: event.persona }), status: "active" });
           break;
 
         case "task.progress":
-          markPrevActive(steps, "done");
-          steps.push({ id, label: t("progress", { persona: event.persona, status: event.status }), status: "active" });
+          markPrevActive(currentSteps, "done");
+          currentSteps.push({ id, label: t("progress", { persona: event.persona, status: event.status }), status: "active" });
           break;
 
         case "task.aggregating":
-          markPrevActive(steps, "done");
-          steps.push({ id, label: t("aggregating"), status: "active" });
+          markPrevActive(currentSteps, "done");
+          currentSteps.push({ id, label: t("aggregating"), status: "active" });
           break;
 
         case "task.completed":
-          markPrevActive(steps, "done");
+          markPrevActive(currentSteps, "done");
+          // Flush thinking steps before result
+          flushThinkingSteps(id);
+          // Add result message - use event.result for this specific completion
           messages.push({
             id,
             role: "system",
             variant: "result",
-            content: thread.result ?? t("completed"),
+            content: event.result ?? t("completed"),
           });
           break;
 
         case "task.failed":
-          markPrevActive(steps, "done");
-          steps.push({ id, label: t("failed", { error: event.error }), status: "error" });
+          markPrevActive(currentSteps, "error");
+          currentSteps.push({ id, label: t("failed", { error: event.error ?? "unknown" }), status: "error" });
           break;
 
         case "hitl.request":
-          markPrevActive(steps, "done");
-          steps.push({ id, label: t("hitlWaiting"), status: "active" });
+          markPrevActive(currentSteps, "done");
+          currentSteps.push({ id, label: t("hitlWaiting"), status: "active" });
           break;
       }
     }
 
-    // Insert thinking message before result/error messages
-    if (steps.length > 0) {
-      // Find insertion point: after last user message, before first result
-      const firstResultIdx = messages.findIndex(
-        (m) => m.role === "system" && (m.variant === "result" || m.variant === "error"),
-      );
-      const thinkingMsg: ChatMessage = {
-        id: `${thread.threadId}-thinking`,
+    // Flush any remaining thinking steps (task still in progress)
+    if (currentSteps.length > 0) {
+      messages.push({
+        id: `${thread.threadId}-thinking-current`,
         role: "system",
         variant: "thinking",
         content: "",
-        steps: [...steps],
-      };
-      if (firstResultIdx >= 0) {
-        messages.splice(firstResultIdx, 0, thinkingMsg);
-      } else {
-        messages.push(thinkingMsg);
-      }
+        steps: [...currentSteps],
+      });
     }
 
-    // Fallback: if thread has a result but no task.completed event in stream
-    const hasCompletedEvent = thread.events.some((e) => e.type === "task.completed");
-    if (thread.result && !hasCompletedEvent) {
+    // Pending follow-up: show user message before task.created arrives
+    if (thread.pendingIntent) {
       messages.push({
-        id: `${thread.threadId}-result-fallback`,
-        role: "system",
-        variant: "result",
-        content: thread.result,
+        id: `${thread.threadId}-pending-followup`,
+        role: "user",
+        content: thread.pendingIntent,
       });
     }
 

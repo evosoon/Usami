@@ -41,10 +41,18 @@ export default function TaskDetailPage({
   const taskStatuses: Record<string, TaskStatus> = {};
   if (thread) {
     for (const event of thread.events) {
-      if ("task_id" in event) {
-        if (event.type === "task.executing") taskStatuses[event.task_id] = "running";
-        if (event.type === "task.progress") taskStatuses[event.task_id] = "completed";
-        if (event.type === "task.failed") taskStatuses[event.task_id] = "failed";
+      if (event.type === "task.executing" && "task_id" in event) {
+        taskStatuses[event.task_id] = "running";
+      }
+      if (event.type === "task.completed_single" && "task_id" in event) {
+        taskStatuses[event.task_id] = "completed";
+      }
+      if (event.type === "task.failed_single" && "task_id" in event) {
+        taskStatuses[event.task_id] = "failed";
+      }
+      // Legacy
+      if (event.type === "task.progress" && "task_id" in event) {
+        taskStatuses[event.task_id] = "completed";
       }
     }
   }

@@ -78,9 +78,32 @@ function HiTLWatcher() {
     threadId: string;
   } | null>(null);
 
-  // Watch for pending HiTL requests across all threads
+  // Watch for pending HiTL requests across all threads (v2: pendingInterrupt, Legacy: pendingHitl)
   useEffect(() => {
     for (const [threadId, thread] of threads) {
+      // v2: interrupt payload
+      if (thread.pendingInterrupt && !currentHitl) {
+        const interrupt = thread.pendingInterrupt;
+        setCurrentHitl({
+          request: {
+            request_id: `interrupt-${threadId}-${Date.now()}`,
+            hitl_type: interrupt.type as "approval" | "clarification" | "conflict" | "error" | "plan_review",
+            title: interrupt.message || "需要确认",
+            description: interrupt.message,
+            context: {
+              raw_output: interrupt.raw_output,
+              errors: interrupt.errors,
+              plan: interrupt.plan,
+              failed_tasks: interrupt.failed_tasks,
+              failed_details: interrupt.failed_details,
+            },
+            options: interrupt.options,
+          },
+          threadId,
+        });
+        break;
+      }
+      // Legacy: pendingHitl array
       if (thread.pendingHitl.length > 0 && !currentHitl) {
         setCurrentHitl({
           request: thread.pendingHitl[0],
@@ -96,11 +119,20 @@ function HiTLWatcher() {
       // Remove resolved HiTL from thread store
       const thread = useThreadStore.getState().threads.get(currentHitl.threadId);
       if (thread) {
-        useThreadStore.getState().updateFromRest(currentHitl.threadId, {
-          pendingHitl: thread.pendingHitl.filter(
-            (h) => h.request_id !== currentHitl.request.request_id,
-          ),
-        });
+        // v2: clear pendingInterrupt
+        if (thread.pendingInterrupt) {
+          useThreadStore.getState().updateFromRest(currentHitl.threadId, {
+            pendingInterrupt: null,
+          });
+        }
+        // Legacy: filter pendingHitl
+        if (thread.pendingHitl.length > 0) {
+          useThreadStore.getState().updateFromRest(currentHitl.threadId, {
+            pendingHitl: thread.pendingHitl.filter(
+              (h) => h.request_id !== currentHitl.request.request_id,
+            ),
+          });
+        }
       }
     }
     setCurrentHitl(null);
@@ -144,7 +176,7 @@ function NotificationWatcher() {
           addNotification({
             type: "task_failed",
             title: "taskFailed",
-            body: event.error,
+            body: event.error ?? "",
             threadId: event.thread_id,
           });
           break;
