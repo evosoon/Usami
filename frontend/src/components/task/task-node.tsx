@@ -23,7 +23,7 @@ const STATUS_STYLES: Record<TaskStatus, string> = {
 };
 
 export function TaskNode({ data }: { data: TaskNodeData }) {
-  const initials = data.persona.slice(0, 2).toUpperCase();
+  const initials = (data.persona ?? "??").slice(0, 2).toUpperCase();
 
   return (
     <div

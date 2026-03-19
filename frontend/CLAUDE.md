@@ -25,6 +25,9 @@ Next.js 16 App Router frontend for Usami — multi-agent orchestration UI.
 pnpm dev          # Dev server (Turbopack)
 pnpm build        # Production build (standalone)
 pnpm lint         # ESLint
+pnpm test         # Unit tests (Vitest)
+pnpm test:watch   # Unit tests in watch mode
+pnpm test:e2e     # E2E tests (Playwright, requires dev server)
 ```
 
 Docker: `docker compose up frontend` (builds with `BACKEND_INTERNAL_URL=http://backend:8000`).
@@ -67,12 +70,20 @@ src/
 ├── i18n/                        # next-intl config and request handler
 │   ├── config.ts                # Locale list + default
 │   └── request.ts               # Server-side locale resolution from cookie
+├── __tests__/                   # Unit tests (Vitest)
+│   ├── setup.ts                 # Test setup (@testing-library/jest-dom)
+│   ├── thread-store.test.ts     # Thread store tests
+│   └── notification-store.test.ts # Notification store tests
 ├── middleware.ts                 # Auth cookie + admin role check
+e2e/                             # E2E tests (Playwright)
+└── smoke.spec.ts                # Smoke tests (landing, login, redirect)
 messages/
 ├── zh.json                      # Chinese translations
 └── en.json                      # English translations
 public/
 └── sw.js                        # Service Worker for push notifications
+vitest.config.ts                 # Vitest configuration
+playwright.config.ts             # Playwright configuration
 ```
 
 ## v2 Architecture Overview
@@ -371,6 +382,67 @@ export default function Page({ params }: { params: Promise<{ threadId: string }>
 | `NEXT_PUBLIC_API_URL` | Client | `""` (empty) | API base URL, empty = use rewrite |
 | `NEXT_PUBLIC_BACKEND_PORT` | Client | `42001` | Backend port for SSE URL, auto-derived from `window.location` |
 | `BACKEND_INTERNAL_URL` | Server | `http://localhost:8000` | Direct backend for SSR/rewrite |
+
+## Testing
+
+### Architecture
+
+| Layer | Framework | Config | Scope |
+|-------|-----------|--------|-------|
+| Unit | Vitest 3 + @testing-library/react | `vitest.config.ts` | Stores, hooks, utilities |
+| E2E | Playwright | `playwright.config.ts` | Page flows (requires dev server) |
+
+### File conventions
+
+| Type | Location | Naming | Example |
+|------|----------|--------|---------|
+| Unit tests | `src/__tests__/` | `*.test.ts` or `*.test.tsx` | `thread-store.test.ts` |
+| E2E tests | `e2e/` | `*.spec.ts` | `smoke.spec.ts` |
+| Test setup | `src/__tests__/setup.ts` | — | `@testing-library/jest-dom/vitest` |
+
+### What to test
+
+- **Zustand stores**: State transitions, action side effects, edge cases (the most critical layer).
+- **Custom hooks**: TanStack Query hooks, derived state hooks.
+- **Utility functions**: `lib/` pure functions (time formatting, sanitization, etc.).
+- **Components**: Only when they contain non-trivial logic. Prefer testing the underlying store/hook instead.
+- **E2E**: Critical user flows — login, chat send, task detail navigation.
+
+### How to add a unit test
+
+```typescript
+// src/__tests__/my-store.test.ts
+import { describe, it, expect, beforeEach } from "vitest";
+import { useMyStore } from "@/stores/my-store";
+
+describe("useMyStore", () => {
+  beforeEach(() => {
+    useMyStore.setState(useMyStore.getInitialState());
+  });
+
+  it("should do something", () => {
+    useMyStore.getState().someAction();
+    expect(useMyStore.getState().someValue).toBe(expected);
+  });
+});
+```
+
+### Commands
+
+```bash
+pnpm test          # Run all unit tests once (CI)
+pnpm test:watch    # Run unit tests in watch mode (dev)
+pnpm test:e2e      # Run Playwright E2E tests (requires dev server running)
+```
+
+### Commit flow integration
+
+Frontend tests are part of the `/commit` skill. When `frontend/` files change:
+1. `pnpm test` runs before staging
+2. `pnpm lint` checks code style
+3. If either fails, commit is aborted
+
+E2E tests (`pnpm test:e2e`) are **not** part of the commit flow — run them separately.
 
 ## Do NOT
 

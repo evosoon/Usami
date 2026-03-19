@@ -6,7 +6,6 @@ import { useTranslations } from "next-intl";
 import { Bell, Check, Trash2, CheckCircle, AlertCircle, HelpCircle, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useNotificationStore } from "@/stores/notification-store";
 import { cn } from "@/lib/utils";
@@ -94,7 +93,7 @@ export function DockNotification() {
               </div>
             </div>
 
-            <ScrollArea className="max-h-80">
+            <div className="max-h-80 overflow-y-auto">
               {notifications.length === 0 ? (
                 <div className="p-6 text-center text-sm text-muted-foreground">
                   {t("empty")}
@@ -132,7 +131,7 @@ export function DockNotification() {
                   })}
                 </div>
               )}
-            </ScrollArea>
+            </div>
           </div>
         </>
       )}

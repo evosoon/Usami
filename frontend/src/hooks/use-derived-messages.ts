@@ -86,8 +86,8 @@ export function useDerivedMessages(thread: Thread | undefined): ChatMessage[] {
             currentSteps.push({ id, label: t("planReady", { count: taskCount }), status: "active" });
           } else if (phase === "executing") {
             markPrevActive(currentSteps, "done");
-            const tasks = event.tasks as string[] | undefined;
-            const label = tasks?.length ? t("executingTasks", { count: tasks.length }) : t("executing", { persona: "" });
+            const taskCount = Array.isArray(event.tasks) ? event.tasks.length : 0;
+            const label = taskCount > 0 ? t("executingTasks", { count: taskCount }) : t("executing", { persona: "" });
             currentSteps.push({ id, label, status: "active" });
           } else if (phase === "aggregating") {
             markPrevActive(currentSteps, "done");

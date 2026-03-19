@@ -38,7 +38,7 @@ function layoutDag(plan: TaskPlan, statuses: Record<string, TaskStatus>) {
   const nodes: Node<TaskNodeData>[] = [];
   const edges: Edge[] = [];
 
-  for (const task of plan.tasks) {
+  for (const task of plan.tasks ?? []) {
     g.setNode(task.task_id, { width: NODE_WIDTH, height: NODE_HEIGHT });
 
     nodes.push({
@@ -53,7 +53,7 @@ function layoutDag(plan: TaskPlan, statuses: Record<string, TaskStatus>) {
       },
     });
 
-    for (const dep of task.dependencies) {
+    for (const dep of task.dependencies ?? []) {
       g.setEdge(dep, task.task_id);
       const depStatus = statuses[dep] ?? "pending";
       edges.push({

@@ -107,6 +107,9 @@ just migration "add table"      # create new migration
 
 # Frontend
 just dev-frontend               # local dev server
+just test-frontend              # unit tests (Vitest)
+just test-frontend-e2e          # E2E tests (Playwright, requires dev server)
+just lint-frontend              # ESLint
 
 # Utilities
 just health                     # backend health check

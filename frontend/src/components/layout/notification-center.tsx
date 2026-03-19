@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Bell, Check, Trash2, CheckCircle, AlertCircle, HelpCircle, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
+
 import { useNotificationStore } from "@/stores/notification-store";
 import type { Notification } from "@/stores/notification-store";
 
@@ -27,13 +27,13 @@ export function NotificationCenter() {
   const router = useRouter();
   const t = useTranslations("notifications");
 
-  const handleClick = (n: Notification) => {
+  const handleClick = useCallback((n: Notification) => {
     markRead(n.id);
     if (n.threadId) {
       router.push(`/tasks/${n.threadId}`);
       setOpen(false);
     }
-  };
+  }, [markRead, router]);
 
   return (
     <div className="relative">
@@ -42,12 +42,15 @@ export function NotificationCenter() {
         size="icon"
         className="size-8 relative"
         onClick={() => setOpen(!open)}
+        aria-label={t("title")}
+        aria-expanded={open}
       >
         <Bell className="size-4" />
         {unreadCount > 0 && (
           <Badge
             variant="destructive"
             className="absolute -top-1 -right-1 size-4 p-0 flex items-center justify-center text-[10px]"
+            aria-label={`${unreadCount} ${t("unread")}`}
           >
             {unreadCount > 9 ? "9+" : unreadCount}
           </Badge>
@@ -85,7 +88,7 @@ export function NotificationCenter() {
               </div>
             </div>
 
-            <ScrollArea className="max-h-80">
+            <div className="max-h-80 overflow-y-auto">
               {notifications.length === 0 ? (
                 <div className="p-6 text-center text-sm text-muted-foreground">
                   {t("empty")}
@@ -122,7 +125,7 @@ export function NotificationCenter() {
                   })}
                 </div>
               )}
-            </ScrollArea>
+            </div>
           </div>
         </>
       )}

@@ -35,6 +35,8 @@ export interface Thread {
   lastHeartbeat: number | null;
   pendingIntent: string | null;
   progress: { completed: number; total: number } | null;
+  /** Highest seq number seen — used for deduplication */
+  lastSeq: number;
 }
 
 interface ThreadStore {
@@ -72,6 +74,7 @@ function createEmptyThread(threadId: string, intent: string = ""): Thread {
     lastHeartbeat: null,
     pendingIntent: null,
     progress: null,
+    lastSeq: 0,
   };
 }
 
@@ -228,6 +231,18 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         thread = createEmptyThread(threadId, intent);
       }
 
+      // Seq-based deduplication: skip events we've already seen.
+      // Transient events (llm.token, heartbeat) have no seq and bypass this check.
+      const eventSeq = "seq" in event ? (event.seq as number | undefined) : undefined;
+      if (eventSeq !== undefined && eventSeq > 0 && eventSeq <= thread.lastSeq) {
+        return state; // duplicate — no-op
+      }
+
+      // Update high-water mark
+      const lastSeq = eventSeq !== undefined && eventSeq > thread.lastSeq
+        ? eventSeq
+        : thread.lastSeq;
+
       // Process event based on type
       const updates: Partial<Thread> = {};
 
@@ -352,7 +367,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           updates.events = [...thread.events, event];
       }
 
-      threads.set(threadId, { ...thread, ...updates });
+      threads.set(threadId, { ...thread, ...updates, lastSeq });
 
       // Auto-set active thread on task.created
       const activeThreadId = event.type === "task.created" && !state.activeThreadId
@@ -400,8 +415,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         }
         return { threads };
       });
-    } catch {
-      // Non-fatal
+    } catch (err) {
+      console.error("[thread-store] Failed to load threads:", err);
     }
   },
 
@@ -491,8 +506,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         threads.set(threadId, thread);
         return { threads };
       });
-    } catch {
-      // Non-fatal
+    } catch (err) {
+      console.error("[thread-store] Failed to load thread events:", threadId, err);
     }
   },
 

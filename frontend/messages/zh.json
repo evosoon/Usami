@@ -153,7 +153,8 @@
     "taskFailed": "任务失败",
     "taskFailedBody": "任务执行失败",
     "hitlRequest": "需要确认",
-    "hitlRequestBody": "任务需要你的确认"
+    "hitlRequestBody": "任务需要你的确认",
+    "unread": "条未读"
   },
   "about": {
     "title": "关于 Usami",
