@@ -42,6 +42,8 @@ export interface Thread {
 interface ThreadStore {
   threads: Map<string, Thread>;
   activeThreadId: string | null;
+  /** Deleted thread IDs - ignore SSE events for these */
+  deletedThreadIds: Set<string>;
   setActiveThread: (threadId: string | null) => void;
   createThread: (threadId: string, intent: string) => void;
   prepareFollowUp: (threadId: string, intent: string) => void;
@@ -52,6 +54,8 @@ interface ThreadStore {
   loadThreadEvents: (threadId: string) => Promise<void>;
   removeThread: (threadId: string) => Thread | undefined;
   restoreThread: (thread: Thread) => void;
+  /** Check if a thread was deleted (for SSE filtering) */
+  isDeleted: (threadId: string) => boolean;
 }
 
 function createEmptyThread(threadId: string, intent: string = ""): Thread {
@@ -189,6 +193,7 @@ function persistedToSseEvent(dto: PersistedEventDto): SseEvent {
 export const useThreadStore = create<ThreadStore>((set, get) => ({
   threads: new Map(),
   activeThreadId: null,
+  deletedThreadIds: new Set(),
 
   setActiveThread: (threadId) => set({ activeThreadId: threadId }),
 
@@ -222,6 +227,11 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
 
   appendEvent: (threadId, event) =>
     set((state) => {
+      // Ignore events for deleted threads
+      if (state.deletedThreadIds.has(threadId)) {
+        return state;
+      }
+
       const threads = new Map(state.threads);
       let thread = threads.get(threadId);
 
@@ -516,8 +526,11 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     set((state) => {
       const threads = new Map(state.threads);
       threads.delete(threadId);
+      // Add to deleted set to ignore future SSE events
+      const deletedThreadIds = new Set(state.deletedThreadIds);
+      deletedThreadIds.add(threadId);
       const activeThreadId = state.activeThreadId === threadId ? null : state.activeThreadId;
-      return { threads, activeThreadId };
+      return { threads, activeThreadId, deletedThreadIds };
     });
     return thread;
   },
@@ -526,6 +539,11 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     set((state) => {
       const threads = new Map(state.threads);
       threads.set(thread.threadId, thread);
-      return { threads };
+      // Remove from deleted set on restore
+      const deletedThreadIds = new Set(state.deletedThreadIds);
+      deletedThreadIds.delete(thread.threadId);
+      return { threads, deletedThreadIds };
     }),
+
+  isDeleted: (threadId) => get().deletedThreadIds.has(threadId),
 }));

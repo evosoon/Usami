@@ -6,6 +6,7 @@ function resetStore() {
   useThreadStore.setState({
     threads: new Map(),
     activeThreadId: null,
+    deletedThreadIds: new Set(),
   });
 }
 
@@ -116,6 +117,26 @@ describe("useThreadStore", () => {
     const removed = useThreadStore.getState().removeThread("t9")!;
     useThreadStore.getState().restoreThread(removed);
     expect(useThreadStore.getState().threads.has("t9")).toBe(true);
+    // Should also be removed from deletedThreadIds
+    expect(useThreadStore.getState().deletedThreadIds.has("t9")).toBe(false);
+  });
+
+  it("ignores SSE events for deleted threads", () => {
+    useThreadStore.getState().createThread("t-del", "to delete");
+    useThreadStore.getState().removeThread("t-del");
+
+    // Try to append event to deleted thread
+    const event: SseEvent = {
+      type: "task.completed",
+      thread_id: "t-del",
+      seq: 1,
+      result: "should be ignored",
+    };
+    useThreadStore.getState().appendEvent("t-del", event);
+
+    // Thread should NOT be recreated
+    expect(useThreadStore.getState().threads.has("t-del")).toBe(false);
+    expect(useThreadStore.getState().isDeleted("t-del")).toBe(true);
   });
 
   it("prepareFollowUp resets streaming state", () => {
