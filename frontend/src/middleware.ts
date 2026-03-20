@@ -28,8 +28,8 @@ export function middleware(request: NextRequest) {
         return NextResponse.redirect(new URL("/chat", request.url));
       }
     } catch {
-      // Malformed token — let backend reject it
-      return NextResponse.next();
+      // Malformed token — deny access to admin routes
+      return NextResponse.redirect(new URL("/chat", request.url));
     }
   }
 

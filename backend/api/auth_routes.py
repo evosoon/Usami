@@ -13,9 +13,11 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from core.auth import (
+    blacklist_token,
     create_access_token,
     create_refresh_token,
     decode_token,
+    decode_token_unsafe,
     hash_password,
     verify_password,
 )
@@ -67,14 +69,17 @@ async def login(request: Request, response: Response, req: LoginRequest):
     access_token = create_access_token(user.id, user.role)
     refresh_token = create_refresh_token(user.id)
 
-    # Set access token as httpOnly cookie (24h)
+    # Set access token as httpOnly cookie (7d, aligned with refresh token lifecycle).
+    # Cookie outlives JWT expiry intentionally — middleware only checks cookie presence,
+    # backend validates JWT signature + expiry. Expired JWT triggers auto-refresh via
+    # api-client 401 interceptor.
     response.set_cookie(
         key="access_token",
         value=access_token,
         httponly=True,
         secure=_IS_PRODUCTION,
         samesite="lax",
-        max_age=24 * 3600,  # 24 hours
+        max_age=7 * 24 * 3600,  # 7 days (matches refresh token lifecycle)
         path="/",
     )
 
@@ -126,14 +131,14 @@ async def refresh(request: Request, response: Response):
     access_token = create_access_token(user.id, user.role)
     new_refresh_token = create_refresh_token(user.id)
 
-    # Update access token cookie (24h)
+    # Update access token cookie (7d, aligned with refresh token lifecycle)
     response.set_cookie(
         key="access_token",
         value=access_token,
         httponly=True,
         secure=_IS_PRODUCTION,
         samesite="lax",
-        max_age=24 * 3600,  # 24 hours
+        max_age=7 * 24 * 3600,  # 7 days (matches refresh token lifecycle)
         path="/",
     )
 
@@ -160,8 +165,17 @@ async def refresh(request: Request, response: Response):
 
 
 @router.post("/auth/logout")
-async def logout(response: Response):
-    """Clear auth cookies."""
+async def logout(request: Request, response: Response):
+    """Clear auth cookies and blacklist access token."""
+    # Blacklist the current access token so it can't be reused
+    access_token = request.cookies.get("access_token")
+    if access_token:
+        payload = decode_token_unsafe(access_token)
+        if payload:
+            redis_client = getattr(request.app.state, "redis_client", None)
+            if redis_client:
+                await blacklist_token(redis_client, payload)
+
     response.delete_cookie("access_token", path="/")
     response.delete_cookie("refresh_token", path="/api/v1/auth")
     return {"status": "ok"}

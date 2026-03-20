@@ -43,7 +43,7 @@ async function refreshAuth(): Promise<{ id: string; email: string; display_name:
 async function request<T>(path: string, options?: RequestInit, _retried = false): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    headers: { "Content-Type": "application/json", "X-Usami-Request": "1", ...options?.headers },
     ...options,
   });
   if (!res.ok) {
