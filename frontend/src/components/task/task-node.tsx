@@ -33,7 +33,7 @@ export function TaskNode({ data }: { data: TaskNodeData }) {
         data.status === "running" && "animate-pulse",
       )}
     >
-      <Handle type="target" position={Position.Top} className="!bg-muted-foreground" />
+      <Handle key="target" type="target" position={Position.Top} className="!bg-muted-foreground" />
 
       <div className="flex items-center gap-2">
         <div className="flex size-7 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
@@ -47,7 +47,7 @@ export function TaskNode({ data }: { data: TaskNodeData }) {
         </div>
       </div>
 
-      <Handle type="source" position={Position.Bottom} className="!bg-muted-foreground" />
+      <Handle key="source" type="source" position={Position.Bottom} className="!bg-muted-foreground" />
     </div>
   );
 }
