@@ -22,7 +22,7 @@ from core.auth import get_current_user
 from core.event_store import delete_thread, get_thread_events, list_user_threads, verify_thread_ownership
 from core.memory import get_session
 from core.state import EVENT_PHASE_MAP, UserProfile
-from core.task_queue import notify_new_task, notify_resume_task, persist_and_notify
+from core.task_queue import notify_cancel_task, notify_new_task, notify_resume_task, persist_and_notify
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -337,7 +337,8 @@ async def cancel_task(
     """
     取消任务 (v2)
 
-    只更新数据库状态，Worker 检测到状态变化会停止执行
+    1. 更新数据库状态
+    2. pg_notify 通知 Worker 取消（事件驱动，实时生效）
     """
     async with get_session() as session:
         # 检查权限
@@ -352,18 +353,21 @@ async def cancel_task(
         if task.user_id != user.id:
             raise HTTPException(status_code=403, detail="无权操作此任务")
 
-        if task.status in ("completed", "failed"):
+        if task.status in ("completed", "failed", "cancelled"):
             return {"status": "already_done"}
 
-        # 更新状态为 failed
+        # 更新状态为 cancelled
         await session.execute(
             text("""
-                UPDATE tasks SET status = 'failed', updated_at = NOW()
+                UPDATE tasks SET status = 'cancelled', updated_at = NOW()
                 WHERE thread_id = :thread_id
-                AND status NOT IN ('completed', 'failed')
+                AND status NOT IN ('completed', 'failed', 'cancelled')
             """),
             {"thread_id": thread_id},
         )
+
+        # 通知 Worker 取消任务（事件驱动，实时生效）
+        await notify_cancel_task(session, thread_id)
 
         # 持久化取消事件
         await persist_and_notify(
@@ -441,15 +445,30 @@ async def delete_thread_api(
     request: Request,
     user: UserProfile = Depends(get_current_user),
 ):
-    """删除对话及其所有事件"""
+    """删除对话及其所有事件（会先取消正在执行的任务）"""
     async with get_session() as session:
-        # 删除 tasks 表记录
+        # 1. 先取消正在执行的任务（CAS 更新状态）
+        result = await session.execute(
+            text("""
+                UPDATE tasks SET status = 'cancelled', updated_at = NOW()
+                WHERE thread_id = :thread_id AND user_id = :user_id
+                AND status IN ('pending', 'running', 'interrupted', 'resuming')
+            """),
+            {"thread_id": thread_id, "user_id": user.id},
+        )
+        was_running = result.rowcount > 0
+
+        # 2. 通知 Worker 取消任务（事件驱动，实时生效）
+        if was_running:
+            await notify_cancel_task(session, thread_id)
+
+        # 3. 删除 tasks 表记录
         await session.execute(
             text("DELETE FROM tasks WHERE thread_id = :thread_id AND user_id = :user_id"),
             {"thread_id": thread_id, "user_id": user.id},
         )
 
-        # 删除 resume_requests 表记录
+        # 4. 删除 resume_requests 表记录
         await session.execute(
             text("DELETE FROM resume_requests WHERE thread_id = :thread_id"),
             {"thread_id": thread_id},
@@ -457,10 +476,10 @@ async def delete_thread_api(
 
         await session.commit()
 
-    # 删除 events 表记录
+    # 5. 删除 events 表记录
     deleted = await delete_thread(thread_id, user.id)
 
-    if deleted == 0:
+    if deleted == 0 and not was_running:
         raise HTTPException(status_code=404, detail="对话不存在")
 
     logger.info("thread_deleted", thread_id=thread_id, user_id=user.id)
