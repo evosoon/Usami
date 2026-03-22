@@ -52,14 +52,53 @@ v2 introduces a **Worker-driven model** where task execution is decoupled from t
 
 ## Collaboration Workflow
 
-See `docs/collaboration-workflow.md` for the standard human-AI collaboration workflow.
+See `docs/collaboration-workflow.md` for the full 8-phase SOP.
 
-Key phases: **Analyze → Align → Plan → Implement → Clean → Reflect → Document → Commit → Next**
+### Mandatory workflow (MUST follow)
 
-Artifacts per phase:
-- **Plan**: `~/.claude/plans/*.md` (ephemeral) + TodoWrite
-- **Reflect**: Patterns/anti-patterns learned
-- **Document**: Update CLAUDE.md + docs/ (persistent)
+For **non-trivial tasks** (new features, refactors, multi-file changes, security hardening), you MUST follow the full workflow:
+
+```
+Phase 1: Analyze & Align  →  Phase 2: Plan  →  Phase 3: Implement  →  Phase 4: Clean
+    ↓                           ↓                   ↓                      ↓
+ Confirm understanding     Write plan doc      TodoWrite + test       Full test suite
+ with user before          to ~/.claude/plans/  each step              must pass
+ proceeding                + TodoWrite, wait
+                           for user approval
+
+Phase 5: Reflect  →  Phase 6: Document  →  Phase 7: Commit  →  Phase 8: Next
+    ↓                     ↓                     ↓                   ↓
+ Summarize what       Update CLAUDE.md      /commit skill       Identify next
+ was learned          + docs/ as needed                         goal, loop
+```
+
+**Skip the full workflow ONLY for**: single-file bug fixes, typo fixes, simple config changes, pure research/exploration.
+
+### Checkpoints (do NOT skip)
+
+| # | Gate | When | Rule |
+|---|------|------|------|
+| 1 | Understanding | Phase 1 end | Restate understanding, wait for user confirmation |
+| 2 | Plan approval | Phase 2 end | Present plan, wait for user "approve" / feedback |
+| 3 | Step verification | Each Phase 3 step | Run relevant tests after each step |
+| 4 | Full test suite | Phase 4 end | `just test` + `just test-frontend` + lint must pass |
+| 5 | Commit verification | Phase 7 end | Push succeeds, no merge conflicts |
+
+### Session resumption
+
+When starting a new session on an existing task:
+1. Check `~/.claude/plans/` for unfinished plan documents
+2. Check TodoWrite state for in-progress items
+3. Resume from the last incomplete phase — do NOT restart from scratch
+
+### Artifacts
+
+| Artifact | Location | Lifecycle |
+|----------|----------|-----------|
+| Plan document | `~/.claude/plans/<task-name>.md` | Ephemeral (delete in Phase 6) |
+| Progress tracking | TodoWrite | Ephemeral (clear in Phase 6) |
+| Lessons learned | Phase 5 output → CLAUDE.md / docs/ | Persistent |
+| Code + docs | Repository | Persistent |
 
 ## Code style
 
