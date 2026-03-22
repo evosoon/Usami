@@ -163,8 +163,8 @@ Backend SSE event → UsamiSSE → sse-store → thread-store.appendEvent() → 
 | `lib/api-client.ts` | Client Components (browser) | Via Next.js rewrite `/api/*` → backend |
 | `lib/api-server.ts` | Server Components / SSR | Direct to `BACKEND_INTERNAL_URL` |
 
-- Client-side API auto-redirects to `/login` on 401.
-- Server-side API uses `fetch()` with `next.revalidate` for caching.
+- Client-side API auto-refreshes on 401 (singleton dedup), then retries once. Sends `X-Usami-Request` CSRF header.
+- Server-side API redirects to `/login` on 401 via `next/navigation` `redirect()`. Uses `fetch()` with `next.revalidate` for caching.
 - Both return typed responses from `types/api.ts`.
 
 ### 3. SSE-first architecture (no polling)
@@ -189,11 +189,14 @@ Backend SSE event → UsamiSSE → sse-store → thread-store.appendEvent() → 
 - `middleware.ts` checks `access_token` cookie on every request to authenticated routes.
 - Missing cookie → redirect to `/login`.
 - Admin routes (`/admin/*`) additionally decode JWT payload to check `role === "admin"`.
-- Non-admin user accessing `/admin` → redirect to `/chat`.
+- Non-admin user or malformed token accessing `/admin` → redirect to `/chat`.
 - Login sets user in `useAuthStore.setUser(user)` — no token stored in JS memory.
+- Login page redirects already-authenticated users to `/chat` (or returnUrl).
 - `AuthHydrator` in `<Providers />` restores user profile on page refresh via `POST /auth/refresh`.
 - `api-client.ts` auto-refreshes on 401: singleton refresh promise dedup, then retry.
-- SSE uses cookies automatically (same hostname, `withCredentials: true`).
+- `api-client.ts` sends `X-Usami-Request: 1` header for CSRF protection (backend requires it for cookie-based auth).
+- `api-server.ts` (Server Components) redirects to `/login` on 401 via `next/navigation` `redirect()`.
+- SSE uses cookies automatically (same hostname, `withCredentials: true`). No CSRF header required (SSE is read-only).
 
 ### 6. Separated route groups
 
@@ -456,3 +459,4 @@ E2E tests (`pnpm test:e2e`) are **not** part of the commit flow — run them sep
 - Create new Zustand stores without documenting them here.
 - Hardcode Chinese strings in components — use `useTranslations()` from next-intl.
 - Mix C端 and admin routes in the same route group — they are separate sub-applications.
+- Make API calls without `X-Usami-Request` header — backend rejects cookie-based auth without it (CSRF protection).

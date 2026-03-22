@@ -7,6 +7,7 @@ v2 Refactor: 独立进程消费 pg_notify，执行 LangGraph 图
 - CAS 保证并发安全
 - 启动时恢复孤儿任务
 - 双通道事件分发（PostgreSQL + Redis）
+- 事件驱动取消（pg_notify 推送，非轮询）
 
 运行方式:
     python -m worker.main
@@ -14,6 +15,7 @@ v2 Refactor: 独立进程消费 pg_notify，执行 LangGraph 图
 架构:
     pg_notify('new_task', '{"thread_id":"..."}')     → handle_new_task()
     pg_notify('resume_task', '{"thread_id":"..."}') → handle_resume_task()
+    pg_notify('cancel_task', '{"thread_id":"..."}') → 设置取消标记
 """
 
 from __future__ import annotations
@@ -37,9 +39,46 @@ from agents.boss import build_boss_graph
 from core.config import load_config
 from core.memory import init_database
 from core.persona_factory import PersonaFactory
-from core.task_queue import PERSISTENT_EVENTS, is_persistent_event
+from core.task_queue import is_persistent_event
 
 logger = structlog.get_logger()
+
+
+# ============================================
+# Cancellation Registry (事件驱动取消)
+# ============================================
+
+class CancellationRegistry:
+    """
+    内存中的取消标记注册表
+
+    工作流程：
+    1. API 删除/取消任务时 → pg_notify('cancel_task', thread_id)
+    2. Worker 收到通知 → registry.cancel(thread_id)
+    3. stream 循环检查 → registry.is_cancelled(thread_id)（纯内存，零 DB 开销）
+    4. 任务结束 → registry.cleanup(thread_id)
+    """
+
+    def __init__(self):
+        self._cancelled: set[str] = set()
+        self._lock = asyncio.Lock()
+
+    async def cancel(self, thread_id: str) -> None:
+        async with self._lock:
+            self._cancelled.add(thread_id)
+        logger.info("task_cancellation_registered", thread_id=thread_id)
+
+    def is_cancelled(self, thread_id: str) -> bool:
+        """同步检查，用于 stream 循环中的快速判断"""
+        return thread_id in self._cancelled
+
+    async def cleanup(self, thread_id: str) -> None:
+        async with self._lock:
+            self._cancelled.discard(thread_id)
+
+
+# Global registry instance
+cancellation_registry = CancellationRegistry()
 
 
 # ============================================
@@ -215,6 +254,15 @@ async def finalize_task(
             logger.info("task_completed", thread_id=thread_id)
 
 
+def is_task_cancelled(thread_id: str) -> bool:
+    """
+    检查任务是否已被取消（纯内存检查，零 DB 开销）
+
+    由 CancellationRegistry 维护，通过 pg_notify 实时更新
+    """
+    return cancellation_registry.is_cancelled(thread_id)
+
+
 async def handle_new_task(
     pool: asyncpg.Pool,
     graph,
@@ -290,13 +338,30 @@ async def handle_new_task(
             config,
             stream_mode=["messages", "updates", "custom"],
         ):
+            # 事件驱动取消检查（纯内存，零 DB 开销）
+            if is_task_cancelled(thread_id):
+                logger.info("task_cancelled_during_execution", thread_id=thread_id)
+                await cancellation_registry.cleanup(thread_id)
+                return
+
             await dispatch_stream_chunk(pool, redis, thread_id, user_id, chunk)
+
+        # 最终检查
+        if is_task_cancelled(thread_id):
+            logger.info("task_cancelled_before_finalize", thread_id=thread_id)
+            await cancellation_registry.cleanup(thread_id)
+            return
 
         # stream 正常结束 → 检查是否有 interrupt
         await finalize_task(pool, redis, graph, thread_id, user_id, config)
 
     except Exception as e:
         logger.exception("task_execution_error", thread_id=thread_id, error=str(e))
+        # 检查是否因为被取消导致的异常
+        if is_task_cancelled(thread_id):
+            logger.info("task_cancelled_with_error", thread_id=thread_id)
+            await cancellation_registry.cleanup(thread_id)
+            return
         await persist_and_notify(pool, thread_id, user_id, {
             "type": "task.failed",
             "data": {"error": str(e), "thread_id": thread_id},
@@ -375,12 +440,29 @@ async def handle_resume_task(
             config,
             stream_mode=["messages", "updates", "custom"],
         ):
+            # 事件驱动取消检查（纯内存，零 DB 开销）
+            if is_task_cancelled(thread_id):
+                logger.info("task_cancelled_during_resume", thread_id=thread_id)
+                await cancellation_registry.cleanup(thread_id)
+                return
+
             await dispatch_stream_chunk(pool, redis, thread_id, user_id, chunk)
+
+        # 最终检查
+        if is_task_cancelled(thread_id):
+            logger.info("task_cancelled_before_finalize", thread_id=thread_id)
+            await cancellation_registry.cleanup(thread_id)
+            return
 
         await finalize_task(pool, redis, graph, thread_id, user_id, config)
 
     except Exception as e:
         logger.exception("task_resume_error", thread_id=thread_id, error=str(e))
+        # 检查是否因为被取消导致的异常
+        if is_task_cancelled(thread_id):
+            logger.info("task_cancelled_with_error", thread_id=thread_id)
+            await cancellation_registry.cleanup(thread_id)
+            return
         await persist_and_notify(pool, thread_id, user_id, {
             "type": "task.failed",
             "data": {"error": str(e), "thread_id": thread_id},
@@ -510,8 +592,9 @@ async def worker_main() -> None:
 
     await listen_conn.add_listener("new_task", on_notification)
     await listen_conn.add_listener("resume_task", on_notification)
+    await listen_conn.add_listener("cancel_task", on_notification)
 
-    logger.info("worker_listening", channels=["new_task", "resume_task"])
+    logger.info("worker_listening", channels=["new_task", "resume_task", "cancel_task"])
 
     # 7. 启动时恢复孤儿任务
     await recover_orphaned_tasks(pool, graph, task_queue)
@@ -538,6 +621,15 @@ async def worker_main() -> None:
             except asyncio.TimeoutError:
                 continue
 
+            # cancel_task 直接处理（不需要 semaphore，纯内存操作）
+            if channel == "cancel_task":
+                try:
+                    data = json.loads(payload)
+                    await cancellation_registry.cancel(data["thread_id"])
+                except Exception as e:
+                    logger.exception("cancel_task_error", error=str(e))
+                continue
+
             async def process(ch=channel, pl=payload):
                 async with semaphore:
                     try:
@@ -555,6 +647,7 @@ async def worker_main() -> None:
         logger.info("worker_shutting_down")
         await listen_conn.remove_listener("new_task", on_notification)
         await listen_conn.remove_listener("resume_task", on_notification)
+        await listen_conn.remove_listener("cancel_task", on_notification)
         await listen_conn.close()
         await pool.close()
         await redis_client.close()

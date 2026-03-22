@@ -68,6 +68,21 @@ async def notify_resume_task(session: AsyncSession, thread_id: str) -> None:
     logger.debug("pg_notify_resume_task", thread_id=thread_id)
 
 
+async def notify_cancel_task(session: AsyncSession, thread_id: str) -> None:
+    """
+    通知 Worker 取消任务（事件驱动取消）
+
+    Worker 收到后设置内存标记，stream 循环检查标记后停止执行
+    payload: {"thread_id": "xxx"} (< 100B)
+    """
+    payload = json.dumps({"thread_id": thread_id})
+    await session.execute(
+        text("SELECT pg_notify('cancel_task', :payload)"),
+        {"payload": payload},
+    )
+    logger.debug("pg_notify_cancel_task", thread_id=thread_id)
+
+
 async def persist_and_notify(
     session: AsyncSession,
     thread_id: str,

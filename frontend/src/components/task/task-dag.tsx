@@ -106,12 +106,8 @@ export function TaskDag({ plan, taskStatuses = {}, readonly = false, className }
         nodesConnectable={false}
         proOptions={{ hideAttribution: true }}
       >
-        {!readonly && (
-          <>
-            <Background />
-            <Controls />
-          </>
-        )}
+        {!readonly && <Background />}
+        {!readonly && <Controls />}
       </ReactFlow>
     </div>
   );

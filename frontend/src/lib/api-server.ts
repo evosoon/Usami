@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { BACKEND_INTERNAL_URL } from "./constants";
 import type {
   TaskResponse,
@@ -28,7 +29,12 @@ async function serverFetch<T>(
     headers,
     next: { revalidate: options?.next?.revalidate ?? 0 },
   } as RequestInit);
-  if (!res.ok) throw new Error(`Backend ${path}: ${res.status}`);
+  if (!res.ok) {
+    if (res.status === 401) {
+      redirect("/login");
+    }
+    throw new Error(`Backend ${path}: ${res.status}`);
+  }
   return res.json();
 }
 

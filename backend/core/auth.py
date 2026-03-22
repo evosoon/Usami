@@ -5,7 +5,7 @@ Password hashing, JWT tokens, FastAPI dependencies, admin seeding
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import bcrypt
 import jwt
@@ -59,7 +59,8 @@ def create_access_token(user_id: str, role: str) -> str:
         "sub": user_id,
         "role": role,
         "type": "access",
-        "exp": datetime.now(timezone.utc) + timedelta(minutes=_access_token_expire_minutes),
+        "jti": uuid.uuid4().hex,
+        "exp": datetime.now(datetime.UTC) + timedelta(minutes=_access_token_expire_minutes),
     }
     return jwt.encode(payload, _jwt_secret, algorithm=_jwt_algorithm)
 
@@ -68,7 +69,7 @@ def create_refresh_token(user_id: str) -> str:
     payload = {
         "sub": user_id,
         "type": "refresh",
-        "exp": datetime.now(timezone.utc) + timedelta(days=_refresh_token_expire_days),
+        "exp": datetime.now(datetime.UTC) + timedelta(days=_refresh_token_expire_days),
     }
     return jwt.encode(payload, _jwt_secret, algorithm=_jwt_algorithm)
 
@@ -77,10 +78,58 @@ def decode_token(token: str) -> dict:
     """Decode and validate a JWT token. Raises HTTPException on failure."""
     try:
         return jwt.decode(token, _jwt_secret, algorithms=[_jwt_algorithm])
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="令牌已过期")
+    except jwt.ExpiredSignatureError as e:
+        raise HTTPException(status_code=401, detail="令牌已过期") from e
+    except jwt.InvalidTokenError as e:
+        raise HTTPException(status_code=401, detail="无效的令牌") from e
+
+
+def decode_token_unsafe(token: str) -> dict | None:
+    """Decode JWT without verifying expiry (for blacklisting already-expired tokens).
+
+    Returns None on decode failure.
+    """
+    try:
+        return jwt.decode(
+            token, _jwt_secret, algorithms=[_jwt_algorithm],
+            options={"verify_exp": False},
+        )
     except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="无效的令牌")
+        return None
+
+
+# ============================================
+# Token Blacklist (Redis-backed)
+# ============================================
+
+_TOKEN_BLACKLIST_PREFIX = "token_blacklist:"
+
+
+async def blacklist_token(redis_client, payload: dict) -> None:
+    """Add a token's jti to Redis blacklist with TTL = remaining token lifetime."""
+    jti = payload.get("jti")
+    if not jti:
+        return
+    exp = payload.get("exp", 0)
+    ttl = max(int(exp - datetime.now(datetime.UTC).timestamp()), 0)
+    if ttl <= 0:
+        return  # Already expired, no need to blacklist
+    await redis_client.setex(f"{_TOKEN_BLACKLIST_PREFIX}{jti}", ttl, "1")
+    logger.info("token_blacklisted", jti=jti, ttl=ttl)
+
+
+async def _is_token_blacklisted(request: Request, jti: str | None) -> bool:
+    """Check if a token jti is in the Redis blacklist. Fails open if Redis unavailable."""
+    if not jti:
+        return False
+    redis_client = getattr(request.app.state, "redis_client", None)
+    if not redis_client:
+        return False
+    try:
+        return await redis_client.exists(f"{_TOKEN_BLACKLIST_PREFIX}{jti}") > 0
+    except Exception:
+        # Redis down — fail open (let request through, JWT expiry is the fallback)
+        return False
 
 
 # ============================================
@@ -96,9 +145,11 @@ async def get_current_user(request: Request) -> UserProfile:
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header[7:]
 
-    # Fall back to cookie
+    # Fall back to cookie (with CSRF check)
     if not token:
         token = request.cookies.get("access_token")
+        if token and not request.headers.get("X-Usami-Request"):
+            raise HTTPException(status_code=403, detail="缺少 CSRF 请求头")
 
     if not token:
         raise HTTPException(status_code=401, detail="未提供认证凭证")
@@ -106,6 +157,9 @@ async def get_current_user(request: Request) -> UserProfile:
     payload = decode_token(token)
     if payload.get("type") != "access":
         raise HTTPException(status_code=401, detail="无效的令牌类型")
+
+    if await _is_token_blacklisted(request, payload.get("jti")):
+        raise HTTPException(status_code=401, detail="令牌已被吊销")
 
     user_id = payload.get("sub")
     if not user_id:
@@ -135,6 +189,45 @@ async def require_admin(user: UserProfile = Depends(get_current_user)) -> UserPr
     if user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="需要管理员权限")
     return user
+
+
+async def get_current_user_sse(request: Request) -> UserProfile:
+    """Authenticate SSE connections (cookie-based, no CSRF header required).
+
+    EventSource cannot set custom headers, so we skip the X-Usami-Request
+    check. SSE is read-only, making CSRF attacks irrelevant.
+    """
+    token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="未提供认证凭证")
+
+    payload = decode_token(token)
+    if payload.get("type") != "access":
+        raise HTTPException(status_code=401, detail="无效的令牌类型")
+
+    if await _is_token_blacklisted(request, payload.get("jti")):
+        raise HTTPException(status_code=401, detail="令牌已被吊销")
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="无效的令牌")
+
+    async with get_session() as session:
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=401, detail="用户不存在")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="账户已被禁用")
+
+    return UserProfile(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        role=UserRole(user.role),
+        is_active=user.is_active,
+    )
 
 
 # ============================================

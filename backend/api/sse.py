@@ -27,7 +27,7 @@ import structlog
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from core.auth import get_current_user
+from core.auth import get_current_user_sse
 from core.state import PersistedEvent, UserProfile
 
 logger = structlog.get_logger()
@@ -71,7 +71,7 @@ MAX_SSE_CONNECTIONS_PER_USER = 5
 @router.get("/events/stream")
 async def sse_stream(
     request: Request,
-    user: UserProfile = Depends(get_current_user),
+    user: UserProfile = Depends(get_current_user_sse),
     last_seq: int = Query(0, description="Last received sequence number"),
     thread_id: str | None = Query(None, description="Filter by thread ID"),
 ):
