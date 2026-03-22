@@ -66,7 +66,7 @@ backend/
 │   ├── hitl.py              # HiTL evaluation logic (confidence/cost thresholds)
 │   ├── memory.py            # SQLAlchemy models: Task, ResumeRequest, Event, User, etc.
 │   ├── event_store.py       # Event retrieval (get_thread_events, list_user_threads)
-│   ├── auth.py              # JWT auth, password hashing, FastAPI dependencies
+│   ├── auth.py              # JWT auth, password hashing, FastAPI deps, CSRF check, token blacklist
 │   └── push.py              # Web Push notifications via pywebpush (VAPID)
 ├── agents/
 │   ├── boss.py              # Boss graph builder: 5-node topology (plan→validate→execute→review→aggregate)
@@ -243,7 +243,10 @@ config -> database -> auth -> push -> redis -> tool_registry -> persona_factory
 
 ### Authentication
 
-Same as before — httpOnly cookies, `get_current_user` dependency.
+- **Tokens**: JWT in httpOnly cookies. Access token (15min JWT, 7d cookie), refresh token (7d).
+- **CSRF**: Cookie-based auth requires `X-Usami-Request` header. Bearer auth (SSR) and SSE are exempt.
+- **Token blacklist**: On logout, access token jti is added to Redis with TTL = remaining expiry. `get_current_user` checks blacklist (fail-open if Redis unavailable).
+- **Dependencies**: `get_current_user` (API routes, with CSRF check), `get_current_user_sse` (SSE, no CSRF), `require_admin` (admin routes).
 
 ## Testing
 

@@ -127,7 +127,7 @@ backend/         Python backend (FastAPI + LangGraph). See backend/CLAUDE.md
   api/           REST + SSE (Server-Sent Events)
   scheduler/     Cron + event bus
   alembic/       DB migrations
-  tests/         pytest suite (10 modules, 129 cases)
+  tests/         pytest suite (9 modules, 99 cases)
 docs/            Human documentation (architecture, design decisions)
 docker-compose.yml           7 services: backend, worker, frontend, postgres, redis, litellm, searxng
 docker-compose.override.yml  Dev overrides: frontend hot-reload (auto-merged by docker compose)
